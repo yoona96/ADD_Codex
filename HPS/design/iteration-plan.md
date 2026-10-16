@@ -1,81 +1,60 @@
 # Hotel Pricing System - Iteration Plan
 
-Regenerated on 2026-10-14 from the current `../architectural-drivers.md` and its preparation model. All five ADD design iterations are complete. The user's subsequent instruction to proceed through the last iteration without asking supersedes intermediate review pauses. Planning assumptions remain provisional; quality targets require validation, not just architectural decisions.
-
-The consolidated deliverable is [architecture.md](architecture.md). Read [validation-plan.md](validation-plan.md) for unresolved acceptance definitions and experiments that have not yet been executed.
-
-| Iteration record | Status | Main decision outcome |
-|---|---|---|
-| [Iteration 1](iteration-1.md) | Design steps complete | Modular Java/Angular structure and ports/adapters. |
-| [Iteration 2](iteration-2.md) | Design steps complete | Secure versioned simulation, configuration and atomic price publication. |
-| [Iteration 3](iteration-3.md) | Design steps complete | Durable ordered CMS delivery and receipt reconciliation. |
-| [Iteration 4](iteration-4.md) | Design steps complete | Independent query scaling and managed failover design. |
-| [Iteration 5](iteration-5.md) | Design steps complete | Artifact promotion, complete test inventory and operational validation plan. |
+Prepared on 2026-10-16 from the supplied architectural drivers and use-case figure. This is an architecture design plan, not a staffing or delivery commitment. All five ADD iterations are documented sequentially in this directory. Implementation and validation remain future work.
 
 ## Iteration Plan Overview
 
 | Iteration | Goal | Drivers to address |
 |---|---|---|
-| 1 | Establish initial system structure around the primary business workflows. | HPS-2, HPS-3, HPS-4; CRN-1 through CRN-4; CON-1, CON-2, CON-4, CON-5, CON-6; QA-6, QA-9 |
-| 2 | Refine secure hotel configuration, pricing simulation, changes and queries. | HPS-1 through HPS-6; QA-1, QA-5; CON-2, CON-4 |
-| 3 | Refine reliable price publication and CMS delivery with observable recovery. | HPS-2, HPS-3; QA-2, QA-8, QA-9; CON-5; CRN-4 |
-| 4 | Refine query availability and scalability. | HPS-3; QA-3, QA-4; CON-6; regression review of QA-1, QA-2, QA-5 |
-| 5 | Complete deployment, independent testing and operational readiness. | QA-6 through QA-9; CON-3, CON-4; CRN-3 through CRN-5; release validation of QA-1 through QA-5 |
-
-All primary quality drivers are addressed before the final readiness iteration. Protocol isolation and testability enter the initial structure to limit rework. Pipeline implementation begins early even though its final refinement occurs in Iteration 5.
+| 1 | Establish the system structure and an authorized hotel-to-price vertical slice | CRN-1, CRN-2, CRN-3, CRN-4; HPS-1, HPS-2, HPS-3, HPS-4; CON-1, CON-2, CON-4, CON-6; QA-5 |
+| 2 | Define deterministic simulation and atomic, low-latency publication | HPS-2, HPS-3, HPS-4, HPS-5; QA-1, QA-2; CRN-4 |
+| 3 | Make CMS delivery durable and observable through failures | HPS-2; QA-2, QA-8; CON-5; CRN-4 |
+| 4 | Refine query availability, scaling and complete authorization | HPS-1, HPS-3, HPS-6; QA-3, QA-4, QA-5; CON-2, CON-6 |
+| 5 | Complete protocol extensibility, isolated testing and environment promotion | QA-6, QA-7, QA-9; CON-3, CON-4, CON-5; CRN-2, CRN-3, CRN-4, CRN-5 |
 
 ## Detailed Iteration Goals
 
 ### Iteration 1: Initial structure
 
-Refine the whole HPS, the sole initial greenfield element. Establish responsibilities for browser interaction, application workflows, domain behavior, persistence and external integration. Evaluate boundaries using the Java/Angular expertise, cloud-native preference, REST compatibility and delivery deadlines; do not assume a service topology in advance.
+Refine the whole HPS into a browser application, modular Java application, durable data store and delivery worker. Establish hotel ownership, identity integration, application ports and work ownership. Deliver diagrams and the security foundation before pricing refinement. The domain model is in architecture section 4.
 
-Drivers: HPS-2, HPS-3, HPS-4; CRN-1 through CRN-4; CON-1, CON-2, CON-4, CON-5, CON-6; QA-6, QA-9. Outputs after review: structural views, responsibility allocation, principal sequences, interface boundaries and trade-offs. QA-1 through QA-5 constrain choices but remain for detailed refinement.
+### Iteration 2: Pricing correctness and publication
 
-### Iteration 2: Secure pricing workflow
+Refine the pricing module and persistence boundary. Define money, rules, configuration versions, simulation, concurrent writes, atomic query visibility and a durable publication record. Exit with a complete change/query contract and an explicit QA-1 measurement boundary; no performance claim is accepted without a benchmark.
 
-Refine hotel/rate configuration, identity, permissions, simulation, recalculation and query visibility. Establish business invariants, concurrency handling and consistent price versions. Resolve tax, currency, rounding and effective-date policies before finalizing calculation contracts.
+### Iteration 3: Reliable integration
 
-Drivers: HPS-1 through HPS-6; QA-1, QA-5; CON-2, CON-4. Evidence: authorized and denied sequences, simulation isolation, calculation examples, visibility contracts and a latency budget. Define the QA-1 measurement boundary and workload before treating the 100 ms target as testable.
+Refine publication delivery into recoverable work with REST adapters, receiver acknowledgement, idempotency and reconciliation. Exit with failure sequences, durable measurement records and the CMS capability dependencies needed to assess QA-2.
 
-### Iteration 3: Reliable publication
+### Iteration 4: Operational resilience and access
 
-Refine accepted-change durability, price visibility and CMS delivery. Analyze crashes, timeouts, duplicate requests, delivery ordering, retry exhaustion and prolonged CMS failure. Compare durable delivery and reconciliation options against operational complexity and external capabilities.
+Refine deployment, query capacity, scoped authorization and permission revocation. Exit with a multi-zone topology, workload hypotheses, query isolation and failure exercises. CMS failure must not sit on the query critical path.
 
-Drivers: HPS-2, HPS-3; QA-2, QA-8, QA-9; CON-5; CRN-4. Evidence: failure sequences, acknowledgement/recovery contracts, telemetry inventory and fault-injection criteria. The provisional eventual-delivery interpretation must be confirmed; REST alone provides no exactly-once guarantee.
+### Iteration 5: Delivery readiness
 
-### Iteration 4: Available and scalable queries
-
-Refine deployment topology, capacity, dependency isolation and data access. Evaluate replicas and caches only with explicit freshness and authorization semantics. Define failover and recovery behavior.
-
-Drivers: HPS-3; QA-3, QA-4; CON-6; regression review of QA-1, QA-2, QA-5. Evidence: deployment/failure views and load/failover test plans. Confirm SLA accounting, RTO/RPO, peak traffic and the provisional QA-4 interpretation of at most 20% average-latency increase at ten times daily volume.
-
-### Iteration 5: Delivery and readiness
-
-Refine artifact promotion, environment configuration, independent integration tests, observability, rollback and migration procedures. Evaluate adding a query protocol without modifying the pricing core. Consolidate open risks and empirical evidence from earlier iterations.
-
-Drivers: QA-6 through QA-9; CON-3, CON-4; CRN-3 through CRN-5; validation of QA-1 through QA-5. Evidence: pipeline/environment views, test-element inventory, telemetry completeness criteria, protocol-extension assessment and release criteria. Distinguish design sufficiency from measured acceptance.
+Refine protocol ports, environment configuration, test doubles, continuous delivery and migration. Exit with a release validation plan, responsibility allocation and traceability for every driver. Review unresolved high-priority scenarios before implementation release gates.
 
 ## Implementation Timeline
 
-Relative dates start at an unspecified project kickoff. This planning envelope needs team-capacity validation; implementation and design overlap, and evidence can reopen earlier decisions.
+Time is relative to an unspecified project kickoff. Architecture work precedes or accompanies the corresponding implementation; iteration numbers are not sprint numbers. Staffing and budget must be confirmed before committing to dates.
 
-| Window | Design focus | Implementation milestone |
+| Period | Implementation objective | Design inputs and exit evidence |
 |---|---|---|
-| Month 1 | Iterations 1–2 | Establish proprietary Git repository and initial pipeline; implement the authenticated configuration/pricing/query skeleton. |
-| Month 2 | Iteration 3 and early Iteration 4 risk analysis | Demonstrate MVP within two months: configuration, rate setup, simulation, price changes and queries with scoped authorization. Exercise CMS delivery with a test endpoint or clearly identified integration mock. |
-| Months 3–4 | Complete Iteration 4 and revisit earlier findings | Run representative load/failure tests and integrate external test systems. |
-| Months 5–6 | Iteration 5 and closure of gaps | Complete staging, recovery, deployment and security validation; deliver initial release within six months. |
+| Weeks 1-2 | Repository, delivery skeleton, hotel configuration and login | Iteration 1; cloud test environment and authorization smoke tests |
+| Weeks 3-6 | Simulation, base/fixed edits, derived rates and queries | Iteration 2; correctness and early latency benchmarks |
+| Weeks 7-8, within 2 months | Demonstrable MVP including CMS delivery against staging test system | Iterations 3 and early 4; authorized hotel-to-CMS flow, retry and query demonstration; missing external access explicitly reported |
+| Months 3-4 | Complete administration, operational resilience and capacity tuning | Iteration 4; permissions, failover, recovery and load evidence |
+| Months 5-6 | Full contract testing, migration rehearsal and release hardening | Iteration 5; all release gates in validation-plan.md |
 
-MVP breadth is proposed, not an approved scope commitment. Integration may use mocks; staging must use test versions of all external systems, including for its sprint demonstrations. Begin quality validation before the final release window.
+MVP includes basic HPS-1 through HPS-6 to support the prioritized HPS-2, HPS-3 and HPS-4 workflows. Rich administration UX and additional protocols can follow the MVP; security and durable acceptance cannot.
 
 ## Alignment with Development Team
 
-| Responsibility area | Capability | Coordination |
+| Responsibility | Expertise | Coordination |
 |---|---|---|
-| Browser workflows | Existing Angular expertise | Agree simulation, validation and authorization behavior. |
-| Pricing/configuration | Existing Java expertise and domain knowledge | Own calculation examples, invariants and visibility contracts. |
-| Identity/integration | Java, cloud identity and REST integration | Agree permissions, CMS acknowledgements and recovery semantics. |
-| Platform/quality | Cloud operations, delivery automation and testing; availability unconfirmed | Own environments, observability, load/failure testing and evidence. |
+| Browser experience | Angular and accessible browser UI | Agrees API contracts with application owner |
+| Pricing and configuration | Java, domain modeling, transactional SQL | Owns rule semantics and simulation parity |
+| Integration | Java, REST contracts, retries and reconciliation | Agrees acknowledgement behavior with CMS owner |
+| Platform and quality | Cloud operations, CI/CD and failure testing | Owns environment templates and release evidence |
 
-These areas do not imply separate teams or services. Team size, cloud vendor and budget remain unknown. Assign actual people after capacity review and track unresolved decisions explicitly to limit technical debt.
+These are responsibility areas, not four assumed teams or fixed headcounts. Individuals may cover multiple areas. Each module has a named owner assigned at kickoff; contract changes require consumer review. No additional vendor platform or orchestration cluster is assumed.

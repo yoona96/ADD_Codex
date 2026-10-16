@@ -2,654 +2,457 @@
 
 ### 1.- Introduction
 
-This is the consolidated ADD 3.0 design resulting from Iterations 1 through 5, completed on 2026-10-14. It replaces the legacy HPS within the boundary described in [architectural drivers](../architectural-drivers.md). The [iteration plan](iteration-plan.md) and individual iteration records preserve refinement rationale. The user's instruction to proceed through the final iteration supersedes the skill's intermediate review pauses; it does not establish stakeholder acceptance of provisional business assumptions.
+This document defines the proposed replacement HPS for approximately 300 hotels. It is the consolidated result of five ADD 3.0 design iterations, prepared on 2026-10-16. See [preparation](preparation.md), [iteration plan](iteration-plan.md) and [validation plan](validation-plan.md). This is a design, not an implemented or benchmarked system. Open acceptance definitions prevent claiming quantitative quality scenarios as proven.
 
-The baseline is an Angular browser application, a Java modular application with separate query and command runtime pools, an independently deployed Java delivery worker, and one HPS-owned managed relational database. External systems use REST; the CMS receives durable asynchronous deliveries through its REST adapter. A broker, distributed microservices and a separate eventually consistent query database are not required for the initial release. These are design decisions, not implemented or benchmarked capabilities.
-
-Scope includes pricing, configuration, authorization integration, query and publication contracts, deployment, operations and verification. External-system redesign and cloud procurement are excluded. Java framework, managed platform and supported component versions must be pinned during implementation on the existing cloud provider. No vendor purchase or infrastructure deployment has been performed.
+Use a modular Java application with an Angular browser UI, managed relational storage and a separately scaled delivery worker. Keep synchronous calculation and atomic publication inside one application transaction; isolate external delivery from that transaction. This reduces distributed coordination within the two-month MVP constraint while preserving explicit boundaries for future change. A managed container runtime is the baseline; Kubernetes, event sourcing and a general rules platform are not justified by the available workload or team information.
 
 ### 2.- Context diagram
 
-The following preserves the supplied context: users submit price changes, HPS supplies prices to business systems, and the cloud identity service validates identities. Arrows describe business information flow, not necessarily the initiator of a network connection. The source credentials arrow is conceptual; the refined login flow uses a redirect to the identity provider rather than collecting passwords in HPS.
+HPS owns hotel pricing and hotel-scoped permissions. Cloud identity owns authentication and credentials. Existing enterprise systems query prices using REST; CMS receives durable asynchronous pushes over REST. Enterprise Reservation System is included because it appears in the business narrative.
 
 ```mermaid
-flowchart TD
-    subgraph System
-        EndUser[End User] -->|Sends price changes| HPS[Hotel Pricing System]
-        HPS -->|Prices| PropertyManagementSystem[Property Management System]
-        HPS -->|Prices| ChannelManagementSystem[Channel Management System]
-        HPS -->|Prices| CommercialAnalysisSystem[Commercial Analysis System]
-        HPS -->|User credentials| UserIdentityService[User Identity Service]
-        HPS -->|Prices| OtherSystems[Other Systems]
-    end
+flowchart LR
+    User[Commercial user and administrator] -->|Browser commands and queries| HPS[Hotel Pricing System]
+    User -->|Login| Identity[Cloud User Identity Service]
+    HPS -->|Identity validation| Identity
+    HPS -->|Price delivery over REST| CMS[Channel Management System]
+    PMS[Property Management System] -->|REST price query| HPS
+    CAS[Commercial Analysis System] -->|REST price query| HPS
+    ERS[Enterprise Reservation System] -->|REST price query| HPS
+    Other[Other authorized systems] -->|REST price query| HPS
 ```
-
-The Enterprise Reservation System mentioned in the business case is treated as an external query consumer pending its contract definition. Direct travel-agency integration remains the CMS's responsibility. External consumers never access the HPS database.
 
 ### 3.- Architectural drivers
 
-#### User stories
+The immutable source is [architectural-drivers.md](../architectural-drivers.md). Interpretations are recorded separately in preparation.md.
 
-| Driver | Requirement summary | Priority and refinement |
+| User story | Scope | Priority |
 |---|---|---|
-| HPS-1 | Login through cloud identity; hotel-scoped access. | Supporting prerequisite; Iteration 2. |
-| HPS-2 | Simulate and change base/fixed prices, calculate derived rates, publish to queries and CMS. | Primary business driver; Iterations 1-3. |
-| HPS-3 | Browser and external price queries. | Primary business driver; Iterations 1, 2, 4. |
-| HPS-4 | Administer hotels, taxes, enabled rates and room types. | Primary business foundation; Iterations 1-2. |
-| HPS-5 | Administer rates and calculation rules. | Supporting prerequisite; Iteration 2. |
-| HPS-6 | Administer user permissions. | Supporting prerequisite; Iteration 2. |
+| HPS-1 | Cloud identity login and hotel authorization | Supporting prerequisite |
+| HPS-2 | Simulate and change base/fixed prices, derive rates, publish and deliver | Primary |
+| HPS-3 | Browser and external price queries | Primary |
+| HPS-4 | Hotel, tax, room and rate configuration | Primary |
+| HPS-5 | Rate definitions and calculation rules | Supporting prerequisite |
+| HPS-6 | Change user permissions | Supporting prerequisite |
 
-#### Quality attribute scenarios
-
-| Driver | Target | Customer priority / difficulty | Design coverage |
-|---|---|---|---|
-| QA-1 | All calculated prices ready for query in less than 100 ms after a single-hotel/date base change. | High / High | Synchronous atomic publication; latency budget in section 8. |
-| QA-2 | 100% of price changes published and received by CMS. | High / High | Atomic outbox, replay and receipt reconciliation; CMS semantics remain a dependency. |
-| QA-3 | Query uptime 99.9% outside maintenance. | High / High | Redundant query tier, database failover, independent CMS delivery. |
-| QA-4 | 100,000 to 1,000,000 daily queries; source says no more than 20% latency decrease. | High / High | Provisionally interpret as no more than 20% increase; capacity verification required. |
-| QA-5 | Identity validation and authorized functionality. | High / Medium | Federated login plus server-side operation and hotel authorization. |
-| QA-6 | Add another query protocol without core changes. | Medium / Medium | Inbound adapters invoke a transport-neutral query port. |
-| QA-7 | Move across nonproduction environments without code changes. | Medium / Medium | Immutable artifacts, runtime configuration, environment-specific secrets. |
-| QA-8 | Collect 100% of required publication performance/reliability measures. | Medium / Medium | Durable publication/attempt records and reconciled metric export. |
-| QA-9 | All elements support integration testing without external systems. | Medium / Medium | Port-based adapters, local dependencies and external protocol simulators. |
-
-#### Constraints
-
-| Driver | Constraint | Design response |
+| Scenario | Target | Priority |
 |---|---|---|
-| CON-1 | Browser on Windows, macOS, Linux and different devices. | Responsive Angular UI; browser/device matrix in validation plan. |
-| CON-2 | Cloud hosting and provider-managed identities. | Existing cloud provider, managed database and federated identity integration. |
-| CON-3 | Existing proprietary Git platform. | Repository and pipeline integration stay on that platform. |
-| CON-4 | MVP within two months; initial release within six. | Modular application first, staged delivery, no mandatory broker or orchestrator build-out. |
-| CON-5 | REST initially, potentially other protocols later. | Versioned REST adapters around stable application ports. |
-| CON-6 | Prefer cloud-native design. | Managed runtime, external configuration, health checks and managed state. |
+| QA-1 | Full hotel/date price set queryable in less than 100 ms after change | High |
+| QA-2 | All accepted changes published and received by CMS | High |
+| QA-3 | Query uptime 99.9% outside maintenance | High |
+| QA-4 | 100,000 to 1,000,000 daily API queries; provisional mean-latency increase at most 20% | High |
+| QA-5 | Cloud identity and authorized operations only | High |
+| QA-6 | New query protocol without changing core | Medium |
+| QA-7 | Environment promotion without code changes | Medium |
+| QA-8 | Complete publication performance and reliability measures | Medium |
+| QA-9 | Every element independently integration-testable without external systems | Medium |
 
-#### Architectural concerns
+| Constraint | Architectural response |
+|---|---|
+| CON-1 | Responsive browser application; Windows, macOS and Linux browser matrix |
+| CON-2 | Cloud hosting and existing cloud identity; no local credential database |
+| CON-3 | Existing proprietary Git platform and its compatible pipeline runner |
+| CON-4 | Working MVP within two months and release within six months; relative schedule |
+| CON-5 | REST first, isolated protocol adapters |
+| CON-6 | Managed cloud runtime, database, secrets and monitoring |
 
-| Driver | Concern | Response |
-|---|---|---|
-| CRN-1 | Initial system structure. | Container/component views below. |
-| CRN-2 | Java and Angular expertise. | Java domain/application/worker; Angular UI. |
-| CRN-3 | Allocate work. | Responsibility areas in section 9 and iteration plan; named staffing remains organizational. |
-| CRN-4 | Avoid technical debt. | Enforced module boundaries, explicit assumptions, decision triggers and compatibility contracts. |
-| CRN-5 | Continuous deployment infrastructure. | Pipeline, immutable promotion and rollback procedure. |
+| Concern | Architectural response |
+|---|---|
+| CRN-1 | Explicit containers and module ownership |
+| CRN-2 | Java application and Angular UI |
+| CRN-3 | Responsibility allocation in iteration plan |
+| CRN-4 | Versioned contracts, automated boundaries, ADRs and controlled schema evolution |
+| CRN-5 | Immutable artifacts, environment configuration and automated promotion |
 
 ### 4.- Domain model
 
-The preparation model is refined here by making each publication carry immutable price versions and a per-hotel ordering number. Hotel/date is the atomic pricing unit; a multi-date user operation contains individually reported child changes. These are proposed contract choices, not changes to the original requirements.
+This conceptual model describes business relationships, not deployment units. Publication and Delivery are design-introduced concepts that make reliability explicit.
 
 ```mermaid
 classDiagram
     class Hotel
     class RoomType
-    class HotelRate {
-        rateKind
-    }
-    class CalculationRule {
-        ruleVersion
-    }
+    class HotelRate
+    class CalculationRule
     class TaxPolicy
-    class Price {
+    class PriceSet {
+        hotelId
         stayDate
-        amount
-        currency
-        priceVersion
-    }
-    class PriceChange {
-        changeId
-        expectedVersion
-    }
-    class Simulation {
+        version
         configurationVersion
     }
-    class Publication {
-        publicationId
-        hotelSequence
+    class Price {
+        amount
+        currency
     }
-    class Delivery {
-        receiptStatus
-    }
-    class ExternalConsumer
+    class PriceChange
+    class Simulation
     class UserReference
     class HotelPermission
+    class Publication
+    class Delivery
+    class ExternalConsumer
     Hotel "1" --> "0..*" RoomType : offers
     Hotel "1" --> "0..*" HotelRate : enables
-    Hotel "1" --> "0..*" TaxPolicy : applies
-    HotelRate "1" --> "0..*" CalculationRule : defines
+    Hotel "1" --> "0..*" TaxPolicy : versions
+    HotelRate "1" --> "0..*" CalculationRule : versions
     HotelRate "0..*" --> "0..1" HotelRate : derivesFrom
-    Hotel "1" --> "0..*" Price : owns
-    RoomType "1" --> "0..*" Price : pricedBy
-    HotelRate "1" --> "0..*" Price : pricedBy
-    Hotel "1" --> "0..*" PriceChange : receives
-    UserReference "1" --> "0..*" PriceChange : requests
+    Hotel "1" --> "0..*" PriceSet : owns
+    PriceSet "1" *-- "1..*" Price : contains
+    Price "0..*" --> "1" RoomType : forRoom
+    Price "0..*" --> "1" HotelRate : forRate
     UserReference "1" --> "0..*" HotelPermission : holds
     HotelPermission "0..*" --> "1" Hotel : scopes
+    UserReference "1" --> "0..*" PriceChange : requests
+    Hotel "1" --> "0..*" PriceChange : receives
     PriceChange "1" --> "0..*" Simulation : previews
     PriceChange "1" --> "0..1" Publication : commits
-    Publication "1" --> "1..*" Price : containsVersions
-    Publication "1" --> "0..*" Delivery : tracks
+    Publication "1" --> "1..*" PriceSet : recordsVersions
+    Publication "1" --> "0..*" Delivery : requires
     ExternalConsumer "1" --> "0..*" Delivery : receives
 ```
 
 | Element | Responsibility and invariant |
 |---|---|
-| Hotel | Configuration, permissions and integration ordering scope. |
-| RoomType | Hotel-owned category; no cross-hotel price references. |
-| HotelRate | Base, fixed or derived rate. Derived dependencies are acyclic; only base/fixed values are directly edited. |
-| CalculationRule | Versioned, validated decimal expression using approved operations; no arbitrary executable scripts. |
-| TaxPolicy | Versioned tax configuration; inclusive/exclusive treatment must be explicit. |
-| Price | Immutable historical value for hotel/date/room/rate; current rows point to a committed version. |
-| PriceChange | One hotel/date command with expected price and configuration versions and an idempotency key. |
-| Simulation | Same calculation engine and explicit input versions as commit, with no price/outbox writes. |
-| Publication | Exactly one per committed child change; contains the complete resulting hotel/date price matrix. |
-| Delivery | One logical delivery per publication/destination with multiple durable attempts and receipt evidence. |
-| ExternalConsumer | Authorized query consumer or publication recipient, with a contract-specific adapter. |
-| UserReference | Provider identity subject; credentials stay at the identity provider. |
-| HotelPermission | Subject, hotel and operation grants, changed only by an authorized administrator. |
+| Hotel | Configuration and access scope; incomplete hotels cannot publish prices |
+| RoomType | Hotel-owned room category; referenced history is retired, not deleted |
+| HotelRate | Base, fixed or derived rate; fixed rates have no parent; derived graph must be acyclic |
+| CalculationRule | Versioned restricted arithmetic expression; no arbitrary Java or remote calls |
+| TaxPolicy | Versioned effective-date policy with explicit inclusion and rounding rules |
+| PriceSet | Complete version for a hotel/date with configuration version; all entries become visible together |
+| Price | Decimal money amount in an explicit currency for one room/rate combination |
+| PriceChange | One hotel's bounded set of date edits, expected versions and idempotency key |
+| Simulation | Pure preview using the same calculator as commit; never creates authoritative prices or delivery work |
+| UserReference | Cloud identity subject; stores no password |
+| HotelPermission | Subject, hotel and allowed operations; administrator scope is explicit |
+| Publication | Immutable committed change and exact price-set versions, actor and timing metadata |
+| Delivery | Consumer/publication pair with state, attempt history and acknowledgement |
+| ExternalConsumer | Contract and authorization scope; only CMS initially requires pushed delivery |
 
-Configuration edits create drafts. Existing published prices retain their calculation/configuration version. Activating changed tax/rate/room configuration schedules explicit child recalculations for the selected effective dates; it does not silently reinterpret stored amounts. Removed rates are retired prospectively and remain in historical publications. Whether activation must be atomic across all dates is unresolved; the baseline reports per-date activation progress.
+Configuration edits create draft versions. Activation impacting existing prices requires explicit recalculation of affected dates; existing price sets retain their previous policy version until that recalculation commits. Never silently reinterpret an old amount using a new tax or rule. Effective-date scope, monetary rounding and tax treatment require business confirmation before implementation.
 
 ### 5.- Container diagram
 
-The Java application is a modular codebase. Command and query deployments use the same artifact with distinct runtime roles and database privileges; the worker is a separate deployable from the same repository. A single owned database supports local transactions without permitting integration through shared tables.
-
-```mermaid
-flowchart LR
-    User[Commercial user or administrator] --> UI[Angular browser application]
-    UI -->|Sign in| IDP[Cloud identity service]
-    UI -->|HTTPS bearer token| Edge[Managed HTTPS ingress]
-    Consumer[External query consumers] -->|HTTPS access token| Edge
-    subgraph HPS[HPS boundary]
-        Edge -->|Commands and administration| Command[Java application command pool]
-        Edge -->|Queries and capabilities| Query[Java application query pool]
-        Command -->|Atomic writes| DB[(HPS managed relational database)]
-        Query -->|Authorized snapshot reads| DB
-        Worker[Java delivery worker] -->|Lease outbox and record receipts| DB
-        Command --> Telemetry[Telemetry collection]
-        Query --> Telemetry
-        Worker --> Telemetry
-    end
-    IDP -.->|Signing keys and metadata| Command
-    IDP -.->|Signing keys and metadata| Query
-    Worker -->|REST publication| CMS[Channel Management System]
-```
-
-| Container | Responsibilities | State and failure behavior |
-|---|---|---|
-| Angular UI | Login redirect, configuration, simulation, edits, queries, status and permitted navigation. | Tokens in memory; no authoritative pricing or permission state. Reload may require SSO. |
-| HTTPS ingress | TLS, routing, request limits and coarse rate limits. | Managed redundant ingress; never the sole authorization layer. |
-| Command pool | Validate/authenticate, authorize, configure, calculate and atomically publish. | Stateless processes; authoritative state in DB. Database failure prevents acceptance. |
-| Query pool | Browser/external queries and capability discovery through shared query port. | Independently scaled, bounded read connections; no CMS dependency. |
-| Managed relational DB | Configuration, grants, current prices, immutable publications, idempotency results, outbox and receipts. | Private access, encrypted backups, synchronous HA option subject to provider validation. |
-| Delivery worker | Ordered per-hotel delivery, retries, acknowledgements and reconciliation. | Renewable leases plus durable records; worker restart does not discard pending work. |
-| Telemetry collector | Operational metrics/logs/traces and export reconciliation. | Not required for price query execution; durable business records repair export gaps. |
-
-#### Production deployment refinement
-
 ```mermaid
 flowchart TB
-    Edge[Redundant managed ingress] --> Q1[Query instance zone A]
-    Edge --> Q2[Query instance zone B]
-    Edge --> C1[Command instance zone A]
-    Edge --> C2[Command instance zone B]
-    Q1 --> Primary[(Database writer endpoint)]
-    Q2 --> Primary
-    C1 --> Primary
-    C2 --> Primary
-    W1[Worker zone A] --> Primary
-    W2[Worker zone B] --> Primary
-    Primary -->|Synchronous HA replication requirement| Standby[(Standby in another zone)]
-    Primary --> Backup[Encrypted point-in-time recovery backups]
+    Browser[Angular browser UI] --> Edge[HTTPS ingress and load balancer]
+    External[External REST consumers] --> Edge
+    Browser --> Identity[Cloud identity]
+    subgraph Cloud[Cloud deployment]
+        Edge --> API[Java application replicas across two zones]
+        API --> DB[Managed relational primary with synchronous standby]
+        Worker[Java delivery worker replicas] --> DB
+        Worker --> CMS[CMS REST endpoint]
+        API --> Telemetry[Metrics traces and audit export]
+        Worker --> Telemetry
+        Secrets[Secret and configuration service] --> API
+        Secrets --> Worker
+    end
+    API -->|Identity keys and login exchange| Identity
 ```
 
-Use at least two query instances across failure zones for production. The managed database must provide fenced failover and a writer endpoint. Synchronous commit with the intended durability semantics must be verified on the chosen service, not inferred from the word managed. Read replicas and price caches are deferred so a successful change is immediately visible on subsequent primary reads. Query/worker/command connection quotas protect the database from one workload exhausting all connections.
+| Container | Responsibilities and deployment |
+|---|---|
+| Angular UI | Login redirect, scoped hotel administration, preview and queries; static cloud hosting |
+| HTTPS ingress | TLS termination, request limits and load balancing; no business authorization ownership |
+| Java application | Browser authentication backend, authorization, configuration, pricing and query modules; stateless replicas with shared session storage |
+| Relational database | Prices, configuration, entitlements, sessions, command receipts, publications and delivery queue; HPS-only ownership |
+| Delivery worker | Leased durable delivery tasks, bounded retries, CMS adapter and reconciliation; independently deployable from request replicas |
+| Telemetry | Dashboards and alerts; durable database records remain the authoritative publication measurement ledger |
+| Secrets/configuration service | Environment-specific endpoints, credentials and configuration; workload identities where supported |
 
-An illustrative 30-day eligible period permits 43.2 minutes of unavailability at 99.9%. The actual SLA period and maintenance rules remain open. Provisional engineering goals are recovery within five minutes after a single-zone/database failover and zero lost acknowledged changes in that failure model; region-wide disaster RTO/RPO require a separate business decision and recovery exercise. Do not claim these goals have been achieved.
+Database tables are shared only by HPS-owned modules and the HPS worker under explicit ownership and least-privilege roles. External applications receive neither SQL access nor shared schemas. A broker is not necessary initially: committed delivery rows are the durable queue. Introduce a broker only if measured polling/throughput or additional consumers justify the added operations and retain the transactional publication boundary.
+
+All API replicas initially read the authoritative primary. This protects immediate queryability after commit and avoids replica-lag ambiguity. The standby is for failover, not routine reads. Multi-zone deployment has a recurring cost; regional disaster recovery remains a separately costed decision pending RTO/RPO.
 
 ### 6.- Component diagrams
 
-#### Java application components
-
 ```mermaid
-flowchart TD
-    Rest[REST inbound adapter] --> Auth[Authentication and authorization]
-    Grpc[Future gRPC inbound adapter] -.-> Auth
-    Auth --> Change[Change and simulation service]
-    Auth --> Query[Price query port]
+flowchart LR
+    REST[REST inbound adapters] --> Auth[Authorization and identity boundary]
+    Future[Future gRPC inbound adapter] -.-> Auth
+    Auth --> Commands[Pricing application service]
+    Auth --> Queries[Price query service]
     Auth --> Admin[Configuration and permission service]
-    Change --> Calc[Pure pricing engine]
-    Change --> Unit[Transaction coordinator]
-    Admin --> Unit
-    Query --> Read[Price and grant read adapter]
-    Unit --> Write[Configuration price outbox and audit adapters]
-    Write --> DB[(HPS database)]
-    Read --> DB
+    Commands --> Calc[Pure deterministic calculator]
+    Commands --> UOW[Transaction and repository ports]
+    Queries --> Read[Price read port]
+    Admin --> UOW
+    UOW --> SQL[Relational adapters]
+    Read --> SQL
 ```
 
-| Component | Responsibility |
+| Component | Responsibilities |
 |---|---|
-| REST adapter | Versioned HTTP contracts, validation and domain-error mapping; no pricing rules. |
-| Authentication/authorization | Verify token signature, issuer, audience and expiry; check current DB grants for every hotel and operation. |
-| Change/simulation service | Load versioned inputs, call engine, validate concurrency and coordinate commits. |
-| Pure pricing engine | Deterministic decimal calculation; same code for simulation and publication; no HTTP, DB or provider SDK dependencies. |
-| Query port | Transport-neutral request/result objects and mandatory principal context. |
-| Configuration/permission service | Draft/version hotel and rate settings; administer grants with audit history. |
-| Transaction coordinator | Own atomic writes and lock ordering; adapters do not independently commit parts of a change. |
-| Persistence adapters | Implement application ports; indexes and SQL are confined here. |
-
-Dependencies point inward to domain/application interfaces. Build checks reject core imports of HTTP, gRPC, identity-provider or persistence adapter packages. A future gRPC adapter supplies authenticated principal context and maps the existing query result; it cannot bypass hotel authorization.
-
-#### Delivery worker components
+| REST inbound adapters | Parse transport DTOs, validate bounds, map errors and propagate request identity |
+| Authorization/identity boundary | Validate session or access token and current hotel/operation entitlements; fail closed |
+| Pricing application service | Preview and commit orchestration, expected-version checks and atomic publication |
+| Calculator | Decimal arithmetic, dependency order, policy version and deterministic output |
+| Price query service | Bounded authorized queries and complete versioned price-set results |
+| Configuration/permission service | Hotel/rate validation, version activation, entitlements and administrator audit |
+| Transaction/repository ports | Atomic storage contract, concurrency checks and idempotent command receipt |
+| Price read port | Protocol-neutral query model and pagination snapshot semantics |
+| Relational adapters | SQL, indexing and persistence-specific mapping; own no pricing rules |
 
 ```mermaid
 flowchart LR
-    Lease[Per-hotel lease scheduler] --> Dispatcher[Ordered dispatcher]
-    Dispatcher --> Adapter[CMS REST adapter]
-    Adapter --> CMS[CMS]
-    Dispatcher --> Ledger[Attempt and receipt ledger]
-    Reconcile[Receipt reconciler and replay control] --> Ledger
-    Ledger --> DB[(Outbox and immutable publications)]
-    Lease --> DB
-    Ledger --> Export[Metric export checkpoint]
+    Poller[Task claimant] --> Lease[Delivery lease repository]
+    Poller --> Sender[Delivery coordinator]
+    Sender --> Adapter[CMS REST adapter]
+    Sender --> Ledger[Attempt and acknowledgement ledger]
+    Reconcile[Reconciler] --> Ledger
+    Reconcile --> Lease
+    Ledger --> Export[Measurement exporter]
 ```
 
-| Component | Responsibility |
+| Worker component | Responsibilities |
 |---|---|
-| Lease scheduler | Acquire an expiring hotel/destination lease; never hold a database transaction open during HTTP calls. |
-| Ordered dispatcher | Send the earliest unacknowledged sequence for that hotel; other hotels continue independently. |
-| CMS REST adapter | Translate envelope, authenticate with a secret-store credential, apply bounded timeouts and interpret receipts. |
-| Ledger | Persist attempt start/result, acknowledgement identifiers and retry scheduling. |
-| Reconciler/replay control | Resolve uncertain receipts, detect missing deliveries, replay exact immutable payloads with the same publication ID. |
-| Metric exporter | Resume from a durable checkpoint and deduplicate exported records. |
-
-Lease ownership alone cannot prevent a paused worker's late HTTP request after lease expiry. CMS deduplication by publication ID and rejection of older hotel sequences are required for safe automatic recovery. If CMS cannot support these, ambiguous delivery enters reconciliation and blocks that hotel's later deliveries; the QA-2 guarantee remains conditional.
-
-#### Browser components
+| Task claimant and lease repository | Claim eligible work with expiring leases and fencing tokens; one in-flight sequence per hotel/consumer |
+| Delivery coordinator | Timeout, retry classification, backoff and per-consumer circuit breaker |
+| CMS REST adapter | Map immutable publication payload to negotiated receiver contract |
+| Attempt/acknowledgement ledger | Persist each intent and observed outcome; timeouts are unknown outcomes, not confirmed failures |
+| Reconciler | Recover expired claims, compare acknowledgements, alert blocked work and redrive safely |
+| Measurement exporter | Export unsampled publication ledger records using durable checkpoints and deduplication |
 
 ```mermaid
 flowchart LR
-    Shell[Responsive shell and navigation] --> Identity[Identity client]
-    Shell --> Editor[Hotel rate and permission editors]
-    Shell --> Pricing[Simulation and price-change workspace]
-    Shell --> Viewer[Price query and delivery status views]
-    Editor --> Client[REST client and error mapping]
+    Shell[Browser shell and login] --> Hotels[Hotel and access views]
+    Shell --> Pricing[Pricing edit and simulation views]
+    Shell --> Query[Price query views]
+    Hotels --> Client[REST client]
     Pricing --> Client
-    Viewer --> Client
-    Identity --> Client
+    Query --> Client
 ```
 
-| Component | Responsibility |
+| Browser component | Responsibility |
 |---|---|
-| Shell/identity client | Federated session, capability-driven navigation and logout. |
-| Editors | Versioned administration forms and conflict handling. |
-| Pricing workspace | Display simulation provenance, require refresh after conflict, show per-date commit outcomes. |
-| Query/status views | Distinguish authoritative query publication from pending CMS receipt. |
-| REST client | Attach token and correlation ID, retain idempotency key on retry, map validation/auth/conflict errors. |
+| Shell/login | Redirect to identity service and maintain secure server session |
+| Hotel/access views | Authorized configuration and permission editing |
+| Pricing views | Explicit preview, conflict reporting and confirmed version display |
+| Query views | Date/rate filtering and version display |
+| REST client | Request correlation and consistent error handling; UI checks do not replace server checks |
 
 ### 7.- Sequence diagrams
 
-#### S1 - Login and authorized access: HPS-1, QA-5
+#### 7.1 Login and permission changes — HPS-1, HPS-6, QA-5
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant UI as Browser
-    participant IDP as Identity provider
-    participant API as HPS API
-    participant DB as Grant store
+    participant UI
+    participant API
+    participant IdP as Cloud identity
+    participant DB
     User->>UI: Sign in
-    UI->>IDP: Authorization code request with PKCE
-    IDP->>User: Authenticate through provider
-    IDP-->>UI: Authorization code
-    UI->>IDP: Redeem code with verifier
-    IDP-->>UI: Access token
-    UI->>API: Get capabilities with token
-    API->>API: Verify signature issuer audience expiry
-    API->>DB: Read current hotel and operation grants
-    DB-->>API: Authorized scope
-    API-->>UI: Capabilities
-    Note over UI,API: Every later operation repeats server-side authorization
+    UI->>API: Begin login
+    API-->>UI: Redirect with state nonce and PKCE challenge
+    UI->>IdP: Authenticate using provider login
+    IdP-->>API: Authorization code via browser callback
+    API->>IdP: Exchange code and validate identity
+    API->>DB: Store session and load entitlements
+    API-->>UI: Secure HttpOnly session cookie and allowed functions
+    User->>API: Administrator changes subject hotel permissions
+    API->>DB: Authorize administrator and commit entitlement revision plus audit
+    API-->>User: Updated revision
+    UI->>API: Next protected request
+    API->>DB: Read current entitlements
+    API-->>UI: Authorized response or 403
 ```
 
-Use authorization code with PKCE and exact registered redirects; browser code does not hold a client secret. This choice follows the security guidance in [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html). Provider compatibility and token revocation behavior require integration validation. Tokens are not written to logs or persistent browser storage. Machine callers use provider-issued workload credentials with explicit hotel/query grants. Local signature verification uses cached keys with rotation refresh; unknown keys or expired tokens fail closed. Existing valid tokens can continue during an identity outage; new logins cannot.
+Use the provider login window rather than collecting passwords in HPS. Validate issuer, audience, signature, expiry, state and nonce as applicable. Browser sessions require CSRF protection and secure cookie settings. External systems use scoped machine access tokens, not browser cookies. Entitlements are read authoritatively on each request; revocation affects requests authorized after the change commits. Already authorized in-flight requests may complete, a boundary requiring confirmation. This follows the authentication model in [OpenID Connect Core](https://www.openid.net/specs/openid-connect-core-1_0.html); HPS authorization remains application-specific.
 
-#### S2 - Simulation and atomic publication: HPS-2, QA-1, QA-2
-
-```mermaid
-sequenceDiagram
-    participant UI as Browser
-    participant API as Change service
-    participant Engine as Pricing engine
-    participant DB as HPS database
-    UI->>API: Simulate proposed values
-    API->>DB: Read authorized versioned configuration and prices
-    API->>Engine: Calculate proposed complete matrix
-    Engine-->>API: Prices and calculation provenance
-    API-->>UI: Preview with price and configuration versions
-    Note over API,DB: Simulation performs no publication writes
-    UI->>API: Commit with versions and idempotency key
-    API->>DB: Begin transaction and lock grant hotel and date records
-    API->>DB: Check authorization idempotency and expected versions
-    alt Version conflict or invalid command
-        API->>DB: Roll back
-        API-->>UI: Conflict or validation error
-    else Valid command
-        API->>Engine: Recalculate using locked versioned inputs
-        Engine-->>API: Complete price matrix
-        API->>DB: Write current prices publication outbox audit and result
-        API->>DB: Commit
-        DB-->>API: Durable commit acknowledgement
-        API-->>UI: Committed version and CMS delivery pending
-    end
-```
-
-A successful response means query-visible commit, not CMS receipt. A timeout after commit is resolved by retrying with the same idempotency key or reading change status. Queries return a complete pre-change or post-change matrix, never a partly updated matrix. A new query begun after acknowledgement reads the committed version or a later one.
-
-#### S3 - Queries and scale: HPS-3, QA-3, QA-4
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Edge as Ingress
-    participant Q as Query instance
-    participant DB as Database writer endpoint
-    Caller->>Edge: Query hotel and date range with token
-    Edge->>Q: Route to healthy query instance
-    Q->>Q: Validate token and bounded query shape
-    Q->>DB: Begin read-only repeatable-read transaction
-    Q->>DB: Read grants and authorized price rows
-    alt Database read succeeds
-        DB-->>Q: Consistent versioned result
-        Q->>DB: End transaction
-        Q-->>Caller: Prices and per-date versions
-    else Database temporarily unavailable
-        Q-->>Caller: Retryable unavailable response
-    end
-    Note over Q,DB: No CMS or synchronous identity round trip
-```
-
-The database adapter uses a single consistent read transaction for grants and result rows. PostgreSQL's documented repeatable-read semantics provide a stable transaction snapshot; successive statements at read committed can observe different snapshots. This motivates the selected read boundary, not a claim that snapshot isolation alone enforces all write invariants. See [PostgreSQL transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html). Pagination across separate calls is explicitly not an atomic multi-page snapshot; clients needing one must use a bounded single response or a separately designed export.
-
-#### S4 - Administration: HPS-4, HPS-5, HPS-6
+#### 7.2 Hotel and rate management — HPS-4, HPS-5
 
 ```mermaid
 sequenceDiagram
     actor Admin
-    participant API as Administration service
-    participant Validator as Configuration validator
-    participant DB as HPS database
-    Admin->>API: Edit hotel rates taxes rooms or grants
-    API->>DB: Check administrator grant and expected version
-    alt Hotel or rate configuration
-        API->>Validator: Validate decimal rules dependencies and effective dates
-        Validator-->>API: Valid draft or detailed errors
-        API->>DB: Commit versioned draft and audit
-        API-->>Admin: Draft version
-        Admin->>API: Activate for selected dates
-        API->>DB: Create tracked per-date recalculation commands
-        Note over API,DB: Each child uses S2 and produces its own publication
-    else Permission edit
-        API->>DB: Lock permission record and commit grants with audit
-        API-->>Admin: Updated grant version
-    end
+    participant API
+    participant Config as Configuration service
+    participant DB
+    Admin->>API: Update hotel rooms tax or rate rules with expected version
+    API->>Config: Authorized configuration command
+    Config->>Config: Validate ownership graph effective dates and policy
+    Config->>DB: Compare version and save draft plus audit
+    DB-->>Config: New configuration version
+    Config-->>Admin: Draft with affected dates
+    Admin->>API: Activate version and explicitly recalculate selected dates
+    API->>DB: Activate under version check
+    API-->>Admin: Active version and pending recalculation scope
 ```
 
-Permission checks for writes acquire compatible grant locks until commit; revocations use conflicting locks. Thus a revocation takes effect after any already-authorized transaction completes, and later writes see the new grants. Queries authorize at transaction start; a query already in progress may finish. No permission cache is used initially. Changes to provider-level identity lifecycle remain with the identity service; HPS-6 edits application grants.
+Recalculation uses the price-change workflow below and pins the selected configuration. Activation does not rewrite historical prices. Retiring a referenced room/rate preserves historical identifiers; new publications validate currently effective configuration.
 
-#### S5 - Durable delivery and recovery: QA-2, QA-8
+#### 7.3 Simulation and atomic publication — HPS-2, QA-1, QA-2
 
 ```mermaid
 sequenceDiagram
-    participant W as Delivery worker
-    participant DB as HPS database
-    participant CMS
-    participant M as Metric exporter
-    W->>DB: Lease hotel and load earliest pending publication
-    W->>DB: Persist attempt start and release transaction
-    W->>CMS: POST immutable publication with ID and sequence
-    alt Durable receipt confirmed
-        CMS-->>W: Receipt ID and publication ID
-        W->>DB: Record receipt and advance delivery position
-    else Timeout or worker crash after CMS receipt
-        Note over W,DB: Publication remains unacknowledged
-        W->>CMS: Reconcile or retry same publication ID
-        CMS-->>W: Existing or new durable receipt
-        W->>DB: Record receipt idempotently
-    else Permanent rejection
-        W->>DB: Mark reconciliation required and retain payload
-        Note over W,CMS: Alert and block later publications for this hotel
+    actor User
+    participant API
+    participant Pricing
+    participant DB
+    User->>API: Simulate bounded hotel/date edits
+    API->>Pricing: Authorized preview
+    Pricing->>DB: Read price and configuration snapshot
+    Pricing->>Pricing: Calculate full price sets
+    Pricing-->>User: Preview and input version token
+    User->>API: Commit with idempotency key and expected versions
+    API->>Pricing: Authorized command with ingress timestamp
+    Pricing->>DB: Begin and lock hotel configuration then date rows in order
+    Pricing->>DB: Check command receipt and expected versions
+    alt Existing same-key same-payload receipt
+        DB-->>Pricing: Original committed result
+    else Stale version or conflicting key payload
+        Pricing->>DB: Roll back
+        Pricing-->>User: 409 conflict requiring review
+    else Valid new change
+        Pricing->>Pricing: Recalculate with pinned inputs
+        Pricing->>DB: Write complete prices publication delivery task receipt and audit
+        Pricing->>DB: Commit atomically
+        DB-->>Pricing: Durable committed version
     end
-    M->>DB: Read publication and attempt records after checkpoint
-    DB-->>M: Durable records
-    M->>M: Export deduplicated measures and advance checkpoint
+    Pricing-->>User: Committed result or explicit conflict
 ```
 
-Atomic price/outbox persistence avoids the gap between committing prices and scheduling their delivery. Duplicate transmissions remain possible and must be handled by the recipient or reconciliation protocol. This is the core rationale of the [transactional outbox pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html); the HPS-specific ordering and receipt policies above are design choices, not provider guarantees.
+The commit response is successful only after durable commit. Simulation never publishes. A unique subject/hotel/idempotency-key constraint plus request hash prevents duplicate commits after a lost response. The receipt, price sets, immutable publication payload and CMS delivery task share one transaction. Publication timing ends at successful database commit, not at CMS receipt. Requests rejected before commit are not accepted changes.
 
-#### S6 - Failure isolation and failover: QA-3
+Transactions serialize overlapping hotel/date updates using deterministic locks and version checks. Hotel configuration edits follow the same lock order. Use a single query snapshot for complete results; multi-query responses use a repeatable snapshot or immutable publication version. Default read-committed statements alone do not guarantee a consistent multi-statement snapshot; see [PostgreSQL transaction isolation](https://www.postgresql.org/docs/14/transaction-iso.html).
+
+Provisional engineering budget for one hotel/date: ingress and authorization 15 ms, input lookup and lock acquisition 15 ms, calculation 20 ms, atomic write/commit 35 ms, contingency 15 ms. This is a target allocation, not evidence; the sum is 100 ms and actual acceptance must remain strictly below 100 ms. Reject oversized synchronous requests with an explicit limit; negotiate limits before implementation. Multi-date changes remain bounded and all-or-nothing. Heavy bulk imports use a separately specified workflow and cannot silently weaken QA-1.
+
+#### 7.4 Delivery and recovery — HPS-2, QA-2, QA-8
+
+```mermaid
+sequenceDiagram
+    participant Worker
+    participant DB
+    participant CMS
+    participant Reconciler
+    participant Metrics
+    Worker->>DB: Claim next hotel-consumer sequence with lease token
+    Worker->>DB: Persist attempt intent and start time
+    Worker->>CMS: POST immutable prices with publication ID and sequence
+    alt Durable receiver acknowledgement
+        CMS-->>Worker: Receipt identifying publication ID
+        Worker->>DB: Verify lease token and record acknowledgement
+    else Timeout or worker crash after send
+        Reconciler->>DB: Recover expired lease and unknown attempt
+        Reconciler->>CMS: Query receipt or retry same publication ID
+        CMS-->>Reconciler: Existing or new durable receipt
+        Reconciler->>DB: Record confirmed receipt
+    end
+    Reconciler->>DB: Read ledger from export checkpoint
+    Reconciler->>Metrics: Export complete publication and attempt records
+```
+
+This is at-least-once delivery with receiver deduplication, not a claim of distributed exactly-once delivery. The transactional publication/task mechanism avoids a database/network dual-write gap; [AWS transactional outbox guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html) documents that principle and the need for duplicate handling. This citation does not select AWS as the hosting vendor.
+
+Never mark work delivered on an unqualified HTTP acceptance response. A 202 requires receipt polling unless the agreed contract explicitly means durable receipt. Retry transient errors with exponential backoff, jitter and a bounded concurrent sender pool. Authentication and validation failures enter a visible blocked state for repair; records are not discarded after a retry count. Strict per-hotel order means a blocked event stalls later events for that hotel; other hotels continue. Receiver sequence checks and idempotency are required to prevent a delayed old request overwriting newer prices after lease expiry. If CMS lacks these capabilities, QA-2 remains partial and requires a negotiated adapter/receipt mechanism; local sender logic alone cannot prove receipt.
+
+#### 7.5 Query and failover — HPS-3, QA-3, QA-4
 
 ```mermaid
 sequenceDiagram
     participant Caller
-    participant Edge as Ingress
-    participant Q1 as Query instance A
-    participant Q2 as Query instance B
-    participant DB as Managed database
-    Q1--xEdge: Health check fails
-    Caller->>Edge: Price query
-    Edge->>Q2: Route to healthy instance
-    Q2->>DB: Authorized snapshot read
-    alt Database failover in progress
-        DB--xQ2: Connection interrupted
-        Q2-->>Caller: Unavailable with bounded retry guidance
-        Note over DB: Provider fences old primary and promotes standby
-        Caller->>Edge: Retry query
-        Edge->>Q2: Route to healthy instance
-        Q2->>DB: Open fresh connection to writer endpoint
-    end
-    DB-->>Q2: Committed prices
-    Q2-->>Caller: Prices
+    participant Edge
+    participant API
+    participant DB
+    Caller->>Edge: GET bounded hotel/date price query
+    Edge->>API: Route to healthy replica
+    API->>DB: Check scope and read complete authoritative price versions
+    DB-->>API: Versioned results
+    API-->>Caller: 200 prices and versions
+    Note over API,DB: On node failure remove unhealthy replica
+    Note over API,DB: On database failover reconnect with bounded retries
+    Caller->>Edge: Retry safe query after transient 503
+    Edge->>API: Healthy replica
+    API->>DB: Query promoted primary
+    API-->>Caller: Prices or explicit unavailable response
 ```
 
-Failover can create downtime and counts against the query availability budget; redundancy does not imply zero interruption. Queries do not silently return stale fallback prices. CMS circuit opening pauses delivery only. Database connection recovery, readiness checks and retry budgets must be tested under load.
+Deploy at least two application replicas across zones and a managed synchronous database standby. Apply readiness probes, bounded timeouts, connection pool limits, request admission and graceful drain. Reserve a query connection/concurrency budget so bulk writes and delivery polls cannot consume all query capacity. CMS outages do not block queries. Identity outages can prevent new logins; valid existing sessions and cached valid signing keys may continue within their validity, while unknown keys fail closed. Database failures remain query failures until failover completes and count against availability.
 
-#### S7 - New query protocol: QA-6
+100,000/day is approximately 1.16 queries/second on average; 1,000,000/day is 11.57. These averages do not specify peaks. Test a provisional 10-times-average peak, approximately 116 queries/second at the high volume, and replace it with observed/confirmed demand. Index prices by hotel, stay date, room and rate, bound date spans, use keyset pagination pinned to a version, and autoscale API replicas on saturation/latency. Do not infer database capacity from API replica count. Add caches or read replicas only with explicit consistency semantics and measured need.
+
+For a provisional 30-day accounting period, 99.9% allows 43.2 minutes of unavailability before maintenance exclusions. The period and exclusion rules are not approved. Measure eligible query availability and count failover, dependency failures and overload responses; show excluded maintenance separately. Regional recovery targets and backup retention remain open.
+
+#### 7.6 Protocol extension and isolated testing — QA-6, QA-9
 
 ```mermaid
 sequenceDiagram
-    participant Client as gRPC client
-    participant Adapter as Future gRPC adapter
-    participant Port as Existing query application port
-    participant Store as Existing read adapter
-    Client->>Adapter: Price request and identity metadata
-    Adapter->>Adapter: Authenticate and map transport fields
-    Adapter->>Port: Query with mandatory principal context
-    Port->>Store: Authorize and read snapshot
-    Store-->>Port: Domain result
-    Port-->>Adapter: Transport-neutral result or error
-    Adapter-->>Client: Mapped protocol response
+    participant Client
+    participant Adapter as REST or future gRPC adapter
+    participant Core as Query application port
+    participant Store as Real test database
+    participant Double as Identity test double
+    Client->>Adapter: Protocol-specific request
+    Adapter->>Double: Validate test identity through identity port
+    Adapter->>Core: Principal and protocol-neutral PriceQuery
+    Core->>Store: Authorize and fetch versioned prices
+    Store-->>Core: PriceResult
+    Core-->>Adapter: Domain result
+    Adapter-->>Client: Protocol-specific response
 ```
 
-Only adapter, dependency wiring, packaging and protocol tests change. The query service, authorization policy and domain model remain untouched. This is an extension test to perform during implementation, not an already delivered gRPC endpoint.
+Core types contain no REST, gRPC, SQL or identity SDK classes. Add protocol mapping and composition-root wiring without changing core source. Integration tests use a real disposable database and deterministic identity/CMS simulators; staging also runs against external test systems to detect gaps in mocks.
 
-#### S8 - Promotion and independent tests: QA-7, QA-9, CRN-5
+#### 7.7 Environment promotion — QA-7, CON-3, CRN-5
 
 ```mermaid
 sequenceDiagram
-    participant Dev as Developer
     participant Git as Existing Git platform
-    participant CI as Pipeline
-    participant Local as Isolated test stack
-    participant Int as Integration environment
-    participant Stage as Staging environment
-    participant Prod as Production environment
-    Dev->>Git: Commit and review
-    Git->>CI: Trigger build
-    CI->>Local: Core tests and adapter integration tests with simulators
-    Local-->>CI: Results and contract evidence
-    CI->>CI: Build immutable image and UI bundle once
-    CI->>Int: Deploy digests with integration configuration
-    CI->>Stage: Promote same digests with staging configuration
-    Stage-->>CI: Real test-system contracts load security and recovery results
-    CI->>Prod: Promote under release policy with production configuration
-    Prod-->>CI: Health and error-budget checks
-    alt Regression detected
-        CI->>Prod: Restore compatible previous image and UI digests
-    end
+    participant CI
+    participant Registry
+    participant Integration
+    participant Staging
+    participant Production
+    Git->>CI: Reviewed change
+    CI->>CI: Build and run isolated tests and boundary checks
+    CI->>Registry: Store immutable application and UI artifact digests
+    Registry->>Integration: Deploy digest plus environment configuration
+    Integration-->>CI: Contract and integration evidence
+    Registry->>Staging: Promote same digests with test-system configuration
+    Staging-->>CI: Load failure security and migration evidence
+    Registry->>Production: Release same digests after release gate
 ```
 
-The Angular bundle loads an environment configuration document at startup rather than embedding environment URLs at build time. Secrets are injected at runtime and never included in that public document. Cloud test doubles support disconnected integration tests; staging validates the assumptions those doubles cannot establish. This diagram defines the future pipeline, not authorization to deploy anything in this task.
+Local development uses the same interfaces with disposable dependencies. Integration substitutes unavailable external systems; staging uses all external test systems; production uses live endpoints. Angular runtime configuration is loaded separately rather than compiled per environment. Keep secrets out of artifacts. Use expand/contract database migrations so old/new replicas overlap safely; rollback application artifacts while retaining compatible schema, and postpone destructive schema removal until rollback windows close.
 
 ### 8.- Interfaces
 
-#### Public REST contracts
+These are proposed architecture contracts; concrete OpenAPI/schema definitions and consumer negotiation are implementation deliverables.
 
-All routes use HTTPS and `/v1`. Token validation and hotel/operation authorization apply to every route, including status and simulation. Monetary values are decimal strings with explicit currency; dates are hotel-local ISO dates. Unknown fields and rule operations are rejected under a documented schema policy. The initial supported currency/tax/rounding policy must be explicit in configuration; no silent default is invented here.
-
-| Interface | Request and result | Consistency and errors |
+| Interface | Inputs and result | Guarantees and errors |
 |---|---|---|
-| `GET /v1/me/capabilities` | Subject-derived hotel/operation grants; identity comes only from validated token. | No client-supplied subject override. |
-| `POST /v1/hotels/{hotelId}/simulations` | Date, base/fixed edits, expected configuration version; returns calculated matrix and input versions. | No price or delivery effects; preview is not a reservation or committed price. |
-| `POST /v1/hotels/{hotelId}/price-changes` | One date, edited base/fixed values, expected price/config versions; `Idempotency-Key`. Returns 201 with change ID, committed version and delivery status. | Successful only after atomic commit. Identical replay returns stored result; reused key with different body returns 409. |
-| `GET /v1/hotels/{hotelId}/changes/{changeId}` | Authoritative commit and CMS receipt state. | Resolves uncertain HTTP outcomes; no cross-hotel information leakage. |
-| `GET /v1/hotels/{hotelId}/prices` | Bounded date range and optional room/rate filters; returns versioned prices and currency/tax metadata. | Current primary snapshot; 422 for excessive query shape; no fabricated prices for missing dates. |
-| `POST /v1/hotels` and `PUT /v1/hotels/{hotelId}/draft` | Hotel metadata, taxes, rooms and enabled rates; draft/version result. | Administrator only, version precondition on update. |
-| `PUT /v1/hotels/{hotelId}/rates/{rateId}/draft` | Validated base/fixed/derived definition and calculation rule. | Cycle, missing dependency and unsupported operation checks. |
-| `POST /v1/hotels/{hotelId}/configuration-activations` | Draft version and effective dates; operation ID with per-date outcomes. | No promise of all-date atomicity; each child uses the pricing transaction. |
-| `PUT /v1/users/{subjectId}/hotel-permissions/{hotelId}` | Operation grants with current permission version. | Administrator scope enforced; audited update. |
+| POST /v1/hotels/{hotelId}/price-simulations | Date edits, expected configuration; returns price sets and input-version token | Authorization required; no authoritative price/delivery side effects; 422 invalid rule |
+| POST /v1/hotels/{hotelId}/price-changes | Idempotency-Key, expected price/config versions, date edits | 201 committed publication ID and versions; replay returns original result; 409 stale version or key misuse; 413 exceeds negotiated bound |
+| GET /v1/hotels/{hotelId}/prices | Bounded dates, optional rate/room filters and version cursor | 200 explicit currency, policy version and complete snapshot; 404 absent price; no invented zero amount |
+| GET /v1/publications/{id} | Authorized publication identifier | Publication state and CMS status; scope checked against owning hotel |
+| Configuration REST resources | Versioned hotels, rooms, tax policies and rate rules | Administrator and hotel scope; optimistic concurrency; no destructive deletion of referenced history |
+| Permission REST resource | Cloud subject, hotel, allowed operations, expected entitlement revision | Authorized administrator; atomic revision/audit; cannot grant outside administrator scope |
+| PriceQuery application port | Principal, HotelId, date interval and filters | Protocol-neutral PriceResult or typed domain errors; authorization remains in core application boundary |
+| Pricing transaction port | Expected versions, calculated sets, publication, receipt and task | Atomic commit or no accepted change; storage failures propagate explicitly |
+| CMS publication contract | Schema version, publication ID, hotel sequence, exact immutable price sets, currency, configuration versions and checksum | Durable receipt identifies publication; deduplicate by ID; enforce sequence; 202 receipt semantics negotiated |
+| Publication measurement record | Request ID, ingress timestamp, commit outcome, elapsed time, publication ID, attempt/receipt timestamps | Unsampled durable ledger and resumable export; distinguish unknown from failed outcomes |
 
-For multi-date price edits, the UI coordinates individual child requests and displays partial outcomes explicitly. A future bulk endpoint must preserve child IDs and idempotency semantics. QA-1 covers the original single-date scenario; a large date range cannot silently inherit its 100 ms promise.
+All public endpoints use TLS, authenticated principals, payload limits and current hotel/operation authorization. Return 401 for missing/invalid identity, 403 for disallowed scope, 409 for concurrency conflicts, 422 for domain invalidity, 429 for throttling and 503 for temporary dependency failure. Do not disclose other hotels' data through error bodies. Amounts use decimal strings and ISO currency identifiers; dates are hotel-local stay dates, while audit instants are UTC. Currency conversion is outside the supplied scope.
 
-Error vocabulary: 400 malformed input; 401 invalid/expired identity; 403 insufficient scope; 404 missing resource within authorized scope; 409 stale version/idempotency mismatch; 422 invalid pricing rules or bounds; 429 quota exceeded; 503 unavailable dependency. Responses include a correlation ID and safe error code, never tokens or SQL details. A 503 or transport timeout does not prove a write failed; clients resolve it using the original idempotency key.
-
-#### Application ports and transaction boundary
-
-| Port | Contract |
-|---|---|
-| `PriceQuery` | Principal context plus bounded hotel/date filters to versioned result; authorization mandatory regardless of transport. |
-| `PriceCalculation` | Explicit versioned inputs to deterministic result or domain validation errors; no I/O. |
-| `PriceChange` | Principal, expected versions, edits and idempotency key to committed publication identity. |
-| `Configuration` | Draft validation and explicit activation commands, retaining prior versions. |
-| `PermissionPolicy` | Current subject/hotel/operation grants, with write/revocation serialization. |
-| `PublicationStore` | Atomic price, publication, audit, idempotency-result and outbox writes. |
-| `CMSDelivery` | Immutable envelope to confirmed receipt, retryable error, permanent error or unknown outcome. |
-
-Write lock order is permission record, hotel control record, then hotel/date state; administration follows the same order when it touches multiple scopes. A hotel control lock serializes publication sequence assignment and configuration activation. This sacrifices same-hotel write concurrency for a simple ordered baseline; different hotels proceed independently. Lock timeout, request size and transaction duration are bounded. Recalculation must not perform network calls while holding locks.
-
-The unique idempotency key scope is subject, hotel and operation. Store request hash and original result in the same commit. A duplicate is checked before comparing old expected versions; it returns the original authorized result instead of an artificial conflict. Retention must exceed the agreed retry/replay window; baseline 90 days is a proposal. Retain key tombstones after removing full results so expired replay keys can be explicitly rejected rather than treated as new commands; final tombstone retention requires an agreed client retry envelope. Current prices use a composite key of hotel/date/room/rate. Immutable publication payloads avoid reconstructing an older delivery from newer prices.
-
-#### CMS publication contract and recovery
-
-Envelope fields: `schemaVersion`, `publicationId`, `changeId`, `hotelId`, `hotelSequence`, `stayDate`, `priceVersion`, `configurationVersion`, `occurredAt`, `correlationId` and complete price rows with currency and tax metadata. The adapter maps this internal envelope to the existing CMS API; the actual CMS route and authentication mechanism remain unknown.
-
-Require CMS durable receipt identification and duplicate recognition by publication ID. If it replies 202, delivery is pending until receipt polling or a verified callback confirms acceptance. HTTP 200 alone is not interpreted as proof without the agreed CMS contract. Do not coalesce away intermediate publications: QA-2 requires every accepted change to reach CMS, even if a later price supersedes it. Version/sequence checks prevent old retries from overwriting newer CMS state.
-
-States are `PENDING`, `IN_FLIGHT`, `RETRY_WAIT`, `ACKNOWLEDGED`, and `RECONCILIATION_REQUIRED`. Expired leases recover to retry/reconciliation. Proposed retry schedule uses exponential backoff with jitter from one second to a five-minute cap; honor valid `Retry-After` limits. Alert on oldest unacknowledged age above five minutes, subject to the eventual business delivery SLO. Permanent payload errors are retained and block only that hotel's stream; an operator repairs the adapter or mapping and replays the same immutable change. Never delete or label a record successful solely because retries were exhausted.
-
-| Failure point | Recovery and invariant |
-|---|---|
-| Before database commit | Entire change rolls back; it was not accepted. |
-| After commit, before HTTP response | Same key returns stored result; no duplicate price change. |
-| Worker fails before send | Lease expires; another worker resumes pending record. |
-| CMS receives, acknowledgement lost | Duplicate-safe retry or receipt lookup; retain unknown state otherwise. |
-| Worker fails after receipt but before ledger write | Same publication ID reconciles to the same CMS receipt. |
-| CMS outage | Prices stay queryable; durable backlog grows, with disk/capacity alerting and admission limits before storage exhaustion. |
-| Region-wide data loss beyond backup coverage | Outside provisional zero-loss failure model; requires agreed disaster RPO and tested restoration/reconciliation. |
-
-#### Performance and capacity model
-
-Proposed QA-1 boundary is ingress receipt to durable commit on the writer, when prices are query-visible; browser transit and CMS receipt are separate measures. Record both the full observed distribution and maximum; use p99 below 100 ms as a provisional engineering target only, since the requirement does not specify a percentile and may require a stricter bound.
-
-| Single-date internal budget | Proposed allocation |
-|---|---|
-| Ingress, token validation and dispatch | 10 ms |
-| Grant/configuration reads and locks | 15 ms |
-| Deterministic price matrix calculation | 20 ms |
-| Price/publication/outbox writes and durable commit | 35 ms |
-| Contingency | 20 ms |
-
-Total is 100 ms with a strict target below that ceiling; these are allocation hypotheses, not measurements. Synchronous HA replication, payload size and hot-hotel locks are the main risks. Test across maximum supported rates, room types and rule complexity before choosing request bounds. Bounded compiled rule caching may be keyed by immutable configuration version; caching current prices is deferred.
-
-100,000 queries/day averages about 1.16 queries/s; 1,000,000 averages about 11.57 queries/s. Neither establishes peak capacity. Provisional peak tests use 10x these averages, about 12 and 116 queries/s, plus a 250 queries/s burst, with identical payload and hotel distributions and simultaneous writes. At each workload report mean, p95, p99, throughput, errors and database saturation. Check high-volume mean against 1.2 times baseline only under the provisional QA-4 interpretation; define an absolute latency SLO as well so two equally slow runs cannot pass operational acceptance.
-
-Scale query instances on measured CPU, queueing and latency while capping total database connections. Load-test indexes for hotel/date lookups and grant checks before considering partitioning or read replicas. Measure hot-hotel distributions, large date ranges, empty results and authenticated-denied calls separately. Request throttling above agreed capacity is explicit and cannot be counted as successful throughput.
-
-#### Observability and environment interfaces
-
-Durable publication rows record change ID, acceptance/commit timestamps, version and expected destinations. Attempt rows record attempt ID, start/end, result, CMS receipt and error classification; an interrupted attempt remains identifiable as unknown. The exporter uses a checkpoint and stable IDs to recover missing exports and avoid double counting. Unsampled committed-publication records support count reconciliation; sampled traces supplement rather than prove 100% coverage. Reconcile accepted changes = query-visible publications = pending plus acknowledged destination records within the defined retention window. Correct for multiple destinations if introduced.
-
-Measure ingress-to-commit latency, observed query visibility, delivery age and completion latency, retries, reconciliation backlog, per-route query errors/latency and dependency health. Never use hotel IDs as unbounded metric labels; put detailed correlation in protected logs/records. Noncommitted request latency comes from ingress/app metrics; 100% end-to-end measurement during total infrastructure loss cannot be assumed and remains an acceptance limitation.
-
-Runtime configuration includes URLs, limits, timeout budgets, database pools, key metadata locations and telemetry destinations. Secrets come from the cloud secret store under workload identities; DB roles are read-only for query instances and narrowly scoped for command/worker roles. Database, backup and network access remain private except the managed ingress. Telemetry must redact credentials and minimize personal data.
+Partition concurrency and delivery ordering by hotel. Publication IDs are globally unique, and each publication stores an immutable payload so retry does not accidentally send today's newer prices for an old change. A multi-date request has one publication referencing all committed sets. Pagination across mutable data uses a bounded-lived version snapshot; expiry returns an explicit restart-required error. Receipt and publication retention must cover the agreed replay/recovery horizon; archive before pruning and retain durable reconciliation watermarks.
 
 ### 9.- Design decisions
 
-| ID / iteration | Driver | Decision | Rationale | Discarded alternatives |
-|---|---|---|---|---|
-| D01 / 1 | CRN-1, CRN-2, CON-4 | Angular plus modular Java application and separate delivery worker. | Fits team skills and local transactional workflow within early delivery constraints. | Many independently owned services introduce distributed data/operations before evidence justifies them. |
-| D02 / 1 | QA-6, QA-9, CON-5 | Ports and adapters with REST at the edge. | Separate protocol and provider changes from pricing behavior. | Framework/HTTP types in core make protocol extension invasive. |
-| D03 / 1 | HPS-2, HPS-3, HPS-4, CON-2, CON-6 | One HPS-owned managed relational store; PostgreSQL-compatible behavior is the reference. | Transactions and versioned configuration fit the domain; no external table access. | External shared database perpetuates coupling; multiple stores add dual-write problems. |
-| D04 / 2 | HPS-2, QA-1 | Synchronous complete hotel/date calculation and atomic price visibility. | Avoids eventual query projection delay and partial matrices. | Async calculation cannot establish query readiness at acknowledgement; calculate-on-query increases read cost. |
-| D05 / 2 | HPS-1, HPS-6, QA-5 | Federated login and current server-side hotel/operation grants. | Provider owns credentials; authorization survives UI bypass attempts. | UI-only permissions and long-lived token-only hotel grants permit unauthorized access or stale revocation. |
-| D06 / 2 | HPS-4, HPS-5, CRN-4 | Versioned configuration, constrained decimal rules and explicit activation. | Simulation provenance and repeatable historical prices. | Arbitrary scripts and implicit recalculation make correctness difficult to audit. |
-| D07 / 2 | HPS-2, QA-2 | Expected versions, idempotency and serialized hotel publication sequence. | Reject stale edits and resolve uncertain responses without duplicate changes. | Last-write-wins and blind HTTP retries can lose user intent. |
-| D08 / 3 | QA-2, CON-5 | Transactional outbox with direct worker-to-CMS REST delivery. | Durable handoff without synchronous CMS dependency or mandatory broker. | DB-plus-network dual write can lose delivery; broker alone does not make price/outbox commit atomic. |
-| D09 / 3 | QA-2, QA-8 | Immutable payloads, per-hotel ordering, receipt reconciliation and durable attempt ledger. | Preserve every accepted change and repair unknown outcomes. | Coalescing intermediate updates conflicts with QA-2; retry exhaustion deletion loses changes. |
-| D10 / 4 | QA-3, QA-4, QA-1 | Separate stateless query pool, zone redundancy and primary reads. | Scale reads and isolate application resources while preserving immediate visibility. | Async read replicas/caches introduce freshness trade-offs; separate query datastore adds propagation delay. |
-| D11 / 4 | QA-3, QA-2 | Managed fenced DB failover with validated synchronous durability and tested backups. | Protect accepted state across defined failures. | Single-zone DB is a common failure point; active-active regional writes add conflict complexity. |
-| D12 / 5 | QA-7, CON-3, CRN-5 | Build once on existing Git platform, promote immutable digests with runtime config. | Reproducible movement between all environments. | Environment-specific rebuilds and branches obscure artifact equivalence. |
-| D13 / 5 | QA-9, QA-6 | Adapter contract suites, local dependency stack and protocol-extension test. | All elements test without live external systems; staging checks real compatibility. | Mock-only testing cannot establish external protocol compatibility. |
-| D14 / 5 | QA-8, CRN-4 | Durable metric source and export reconciliation, plus health/latency telemetry. | Recover publication evidence after collector outage. | Sampled traces alone cannot establish complete publication accounting. |
-| D15 / 5 | CON-4, CRN-3, CRN-4 | Assign responsibility areas and use reversible expand/contract migrations and staged cutover. | Limit delivery risk and avoid two active price writers. | Big-bang migration without shadow comparison or rollback evidence. |
+| ID / Driver | Decision | Rationale | Discarded alternatives |
+|---|---|---|---|
+| D1 / CRN-1, CRN-2, CON-4 | Angular plus modular Java application and separate delivery worker | Familiar technology, small initial deployment surface and clear ownership | Per-domain microservices initially: network transactions and operational burden |
+| D2 / HPS-1, HPS-6, QA-5, CON-2 | Cloud login and server-enforced current hotel entitlements | Credentials remain with provider; UI and API share access policy | UI-only checks or custom password store: inadequate trust boundary |
+| D3 / HPS-2, HPS-4, HPS-5, QA-1 | Pure versioned calculator, bounded synchronous calculation, decimal money | Preview/commit parity and predictable request work | Remote rules engine and asynchronous-only projection: latency/consistency risk |
+| D4 / QA-1, QA-2, CRN-4 | Atomic prices, publication payload, delivery task and command receipt | No accepted update without queryable prices and recoverable delivery work | Separate database and HTTP writes: loss gap |
+| D5 / HPS-3, QA-1, QA-4 | Primary-store queries and indexed complete price sets | Immediate committed visibility without cache invalidation | Unqualified replica or cache reads: stale prices |
+| D6 / QA-2, CON-5 | Leased REST delivery, receiver idempotency and receipt reconciliation | Isolates external failures and makes ambiguous outcomes recoverable | Synchronous CMS dependency or claimed exactly-once HTTP: unsupported |
+| D7 / QA-8 | Durable unsampled publication/attempt ledger and checkpointed export | Detects missing measurements and allows replay | Sampled traces alone: cannot demonstrate completeness |
+| D8 / QA-3, QA-4, CON-6 | Multi-zone replicas and database standby, query resource reservations | Reduces single-node failures and workload interference | Single-zone deployment; premature multi-region active-active complexity |
+| D9 / QA-6, QA-9, CON-5 | Application ports and isolated protocol/persistence adapters | New transports and test doubles avoid core edits | Transport/SDK types in core: tight coupling |
+| D10 / QA-7, CON-3, CRN-5 | Build once, runtime config, same digest promotion, compatible migrations | Reproducible releases without environment-specific code | Rebuild per environment or simultaneous breaking schema deployment |
+| D11 / CRN-3, CRN-4, CON-4 | Module owners, contract review, staged delivery and measured release gates | Aligns scope with delivery windows and exposes uncertainty | Speculative platform expansion or deadline promises without staffing |
+| D12 / HPS-2, QA-2, CRN-4 | Snapshot migration, price reconciliation and controlled source cutover | Avoids two systems accepting conflicting authoritative edits | Uncoordinated dual writes and unverified bulk import |
 
-#### Operations and release procedure
-
-Build gates include core invariant tests, module dependency checks, schema/contract compatibility, security scanning and adapter integration suites. Promote a signed/identified image digest and UI digest through integration, staging and production; inject only runtime configuration. Deployment health checks exercise a scoped synthetic price query. Use a small initial production traffic share and monitor error budget before completing rollout, under the organization's release policy.
-
-Use expand/contract database migrations: add compatible schema first, deploy code tolerant of both versions, backfill with checkpoints, then remove old schema only after the rollback window. Rollback restores application/UI artifacts, not destructive reverse migrations. Keep worker/event schemas backward compatible while old publications remain outstanding. When business data needs correction, create audited compensating price changes; never restore an old whole database merely to roll back code.
-
-Legacy cutover: inventory consumer contracts, map/import hotel/rate/permission and price state, compare representative calculations, shadow-read new queries, then freeze legacy writes for final reconciliation. Switch to a single HPS write authority and explicitly transfer pending-delivery ownership before enabling new worker sends. Prevent duplicate CMS publication during overlap. Rollback to legacy requires reconciling changes accepted by the new system; a traffic switch alone is insufficient. Migration feasibility and legacy export access are open dependencies.
-
-| Responsibility area | Deliverables | Collaboration boundary |
-|---|---|---|
-| Front end | Responsive workflows, capability UI, conflicts and delivery status. | Agree contracts with application owners. |
-| Domain/application | Rules, configuration lifecycle, transaction semantics and query port. | Own invariant and calculation examples. |
-| Integration/security | Identity adapter, grants, CMS contract and receipt recovery. | Obtain provider/CMS contract evidence. |
-| Platform/quality | Environments, pipeline, load/failure suites, telemetry and runbooks. | Validate operational targets and release evidence. |
-
-Named staff and capacity are unspecified; these are work packages, not headcount commitments. Revisit the modular baseline if measured hot-hotel lock waits exceed the latency budget, database saturation persists after indexing/tuning, delivery destinations multiply, or independently owned teams need independent releases. A broker may then help fan-out, but does not replace the atomic publication record.
-
-#### Final assessment and remaining evidence
-
-All five ADD design iterations have been executed. **Satisfied** below means sufficient design decisions exist for the stated architectural intent; it does not mean a deployed system passed acceptance. **Partially satisfied** means remaining business/contract detail or design validation can materially change the decision. No runtime tests were possible because this task produced architecture documentation, not an implementation.
-
-| Driver | Final analysis result | Evidence still required |
-|---|---|---|
-| HPS-1 | Satisfied at design level: S1 and D05. | Provider login, expiry, key rotation and outage tests. |
-| HPS-2 | Partially satisfied: S2/S5, D04/D07-D09. | Calculation policies, multi-date atomicity expectations and CMS receipt compatibility. |
-| HPS-3 | Satisfied at design level: S3, D02/D10. | Query contract and consistency tests. |
-| HPS-4 | Partially satisfied: S4 and versioned activation. | Tax treatment and activation semantics. |
-| HPS-5 | Partially satisfied: constrained versioned rules. | Approved rule vocabulary, rounding and effective dates. |
-| HPS-6 | Satisfied at design level: scoped grant editing and audit. | Administrator policy, revocation and negative tests. |
-| QA-1 | Partially satisfied: atomic primary publication and budget. | Timing/percentile/workload agreement and measured worst-case matrix/lock behavior. |
-| QA-2 | Partially satisfied: durable outbox and receipt recovery. | CMS idempotency/ordering/receipts, retention and recoverable-failure scope. |
-| QA-3 | Partially satisfied: redundant query tier and database failover. | Provider configuration, SLA period and measured failover/recovery. |
-| QA-4 | Partially satisfied: independent query scaling and workload plan. | Corrected target, peak profile, absolute latency SLO and paired load tests. |
-| QA-5 | Satisfied at design level: federated identity and enforced grants. | Identity protocol fit, security testing and revocation-policy acceptance. |
-| QA-6 | Satisfied at design level: S7 and dependency rule. | Implement second adapter and verify unchanged core. |
-| QA-7 | Satisfied at design level: S8 and runtime config. | Promote identical digests across nonproduction environments. |
-| QA-8 | Partially satisfied: durable metrics and reconciliation. | Agreed measure inventory/retention and collector-crash completeness test. |
-| QA-9 | Satisfied at design level: ports and complete test-element inventory. | Execute all independent suites plus external staging contracts. |
-| CON-1 | Satisfied at design level: responsive browser client. | Browser/device matrix tests. |
-| CON-2 | Satisfied at design level: cloud/provider identity boundary. | Confirm existing provider services and integration support. |
-| CON-3 | Satisfied at design level: existing Git platform pipeline. | Repository/pipeline configuration. |
-| CON-4 | Partially satisfied: staged two/six-month plan. | Staffing, scope and legacy-integration estimates. |
-| CON-5 | Satisfied at design level: initial REST adapters. | Existing consumer and CMS contract verification. |
-| CON-6 | Satisfied at design level: managed runtime/state and external config. | Provider sizing and cost review. |
-| CRN-1 | Satisfied: container/component/deployment views. | Implementation conformance review. |
-| CRN-2 | Satisfied: Java/Angular allocation. | Team framework/version selection. |
-| CRN-3 | Partially satisfied: defined work packages. | Named owners and capacity allocation. |
-| CRN-4 | Partially satisfied: boundaries, decisions and debt triggers. | Resolve listed assumptions and enforce checks during development. |
-| CRN-5 | Satisfied at design level: pipeline and rollback design. | Implement and rehearse pipeline. |
-
-The detailed experiment inventory and unresolved acceptance decisions are maintained in [validation-plan.md](validation-plan.md). Complete documentation is the outcome of this task; operational SLA achievement remains unproven.
+Design trade-offs and alternatives are expanded in iteration-1.md through iteration-5.md. Satisfaction assessments there refer to design coverage, not passed runtime tests. QA-1 through QA-4, QA-8 and receiver-dependent QA-2 remain conditional; see validation-plan.md for acceptance gates and residual risks.

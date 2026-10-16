@@ -3,7 +3,7 @@
 - This project is to design architecture according to ADD 3.0 process.
 - Do not modify files in root directory and `/.codex` directory.
 - Do not modify `/HPS/architectural-drivers.md` file.
-- Follow the `SKILL.md` files in relevant directory under `/.codex/skills` directory.
+- Follow the skill files under `/.codex/skills` directory, if needed.
 
 ## Brief Workflow
 
@@ -32,4 +32,4 @@ Tone and behavior:
 Output expectations:
 - Provide architecture-level reasoning, not low-level code unless explicitly requested
 - Prefer diagrams and tables for readability. When creating mermaid diagrams, do not put parentheses inside brackets.
-- Follow the ADD process exactly as it is described in the file `skills/add-process/SKILL.md`.
+- Follow the ADD process exactly as it is described.

@@ -1,6 +1,6 @@
 ---
 name: preparatory-steps
-description: This is a skill for step-by-step process following the ADD 3.0 prepatory steps.
+description: This is a skill for step-by-step process following the ADD 3.0 preparatory steps.
 ---
 
 # Preparatory steps
@@ -11,16 +11,16 @@ description: This is a skill for step-by-step process following the ADD 3.0 prep
 
 ## Preparation step 2: Create domain model
 - Consider the `/HPS/architectural-driver.md` document and create a domain model for the system.
-- Create this domain model in the `/HPS/architectural-driver.md` document.
+- Create this domain model in the `/HPS/design/architecture.md` document.
 - Represent the domain model using a class diagram using mermaid format.
 - Include a table that describes each element of the domain model.
 
 ## Preparation step 3: Create iteration plan
-- Consider the requirement priorities in `/HPS/architectural-driver.md` and the domain model in `/HPS/architectural-driver.md`.
-- Create an iteration plan for the design of the system, according to the process in `../skills/add-process/SKILL.md`.
+- Consider the requirement priorities in `/HPS/architectural-driver.md` and the domain model in `/HPS/design/architecture.md`.
+- Create an iteration plan for the design of the system, according to the ADD process.
 - Describe, for each iteration, what the main goal will be.
     - The first iteration should be focused on initially structuring the system.
-    - The following iterations should be focused on addressing high priority drivers.
+    - The following iterations should be focused on addressing high-priority drivers.
 - Be sure to address requirements that directly support the business in early iterations.
 - Present the iteration plan as a table with iteration number, goal and list of drivers to be addressed.
-- Output the iteration plan to an `iteration-plan.md` file in the `/HPS/design/` directory. Follow `template.md` when generating the iteration plan.
+- Output the iteration plan to an `/HPS/design/iteration-plan.md` file. Follow `template.md` when generating the iteration plan.

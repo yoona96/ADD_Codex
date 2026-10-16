@@ -1,75 +1,68 @@
 # Hotel Pricing System - Iteration 4
 
-Completed on 2026-10-14 as an ADD design iteration. The user explicitly authorized execution through the last iteration without review pauses. Completion means the design steps and analysis are documented, not that the system is implemented or its quality targets verified.
+Refine the query deployment and complete access control on the foundation from iterations 1-3.
 
 ## Iteration Goal
 
-Refine the deployment and data-access design to support query availability and tenfold daily query growth without breaking publication consistency.
+Support query availability and tenfold daily volume while enforcing current hotel-level permissions across browser and external callers.
 
 ## Drivers to Address
 
-HPS-3; QA-3, QA-4; CON-6; regression review of QA-1, QA-2, QA-5.
+HPS-1, HPS-3, HPS-6; QA-3, QA-4, QA-5; CON-2, CON-6.
 
 ## ADD Process Steps
 
-### Step 1: Review inputs
+### Step 2: Establish goal by selecting drivers
 
-Queries and writes share the HPS-owned store but no external integration dependency. Daily totals alone do not establish peak capacity. QA-4 wording remains provisionally interpreted as at most 20% mean latency increase; SLA accounting and disaster RTO/RPO are unspecified.
-
-### Step 2: Establish the goal by selecting drivers
-
-Follow Iteration 4 of [iteration-plan.md](iteration-plan.md). Refine the deployment and data-access design to support query availability and tenfold daily query growth without breaking publication consistency. Priorities and assumptions remain traceable to [architectural-drivers.md](../architectural-drivers.md).
+Apply iteration-plan.md iteration 4. Address high-priority availability and scalability without weakening iteration 2's immediate query visibility. Complete security beyond login and UI filtering.
 
 ### Step 3: Choose elements to refine
 
-| Element | Refinement scope |
-| --- | --- |
-| Query runtime and ingress | Independent scaling, zone redundancy and request/connection limits. |
-| Managed database and connection adapters | Fenced failover, synchronous durability, backups and reconnect behavior. |
-| Operational capacity model | Paired load tests, hot-hotel contention and bounded admission. |
+Refine API deployment, authoritative database, load balancing, query resource pools, authorization and session management. Keep the calculator and CMS worker independent of the query path.
 
 ### Step 4: Choose design concepts
 
 | Design concept | Pros | Cons | Discarded alternatives |
-| --- | --- | --- | --- |
-| Independent stateless query pool | Scales reads and isolates application resources from commands/workers. | Database remains shared; more runtime configuration. | One undifferentiated pool: command/worker load can exhaust query resources. |
-| Primary snapshot reads without price cache | Preserves immediate post-commit visibility and avoids invalidation. | Read load remains on writer. | Async read replica or cache: freshness semantics would need new decisions. |
-| Multi-zone managed DB and runtime | Reduces single-zone failure exposure with managed operations. | Cost and synchronous commit latency; provider details matter. | Single-zone deployment: insufficient isolation; regional active-active: excessive conflict complexity. |
-| Bounded connections, request shapes and measured scale-out | Protects common database and makes capacity testable. | Throttling must be visible and not counted as success. | Unlimited autoscaling: can overload the database. |
+|---|---|---|---|
+| Multi-zone replicas and synchronous standby | Removes individual application node and zone as sole execution points | Failover still interrupts requests; higher recurring cost | Single-zone production deployment |
+| Indexed primary reads and bounded queries | Simple consistency and predictable query work | Primary remains a scaling bottleneck | Early read replicas/caches with undefined freshness |
+| Query bulkheads and admission control | Protects queries from write/delivery saturation | Requires tuning; excess traffic can be rejected | Unlimited threads or database connections |
+| Authoritative per-request entitlements | Clear post-commit permission revocation boundary | Adds database work to protected requests | Long-lived permission claims with unbounded stale authorization |
 
-### Step 5: Instantiate elements, sketch views and define interfaces
+### Step 5: Instantiate elements, views, responsibilities and interfaces
+
+Architecture section 5 shows the two-zone application and managed standby topology. Sequences 7.1 and 7.5 define permission updates, authorized queries and failover; section 8 records the resulting query/access contracts.
 
 | Instantiation decision | Rationale |
-| --- | --- |
-| At least two production query instances across zones behind managed ingress | A failed instance can be removed while others serve. |
-| Distinct query, command and worker DB connection budgets | Prevent one workload consuming all database connections. |
-| Managed writer endpoint with fenced standby promotion, fresh connections and bounded retry | Count failover interruption honestly against the SLA. |
-| Provisional 12/116 requests per second paired peaks and 250 requests per second burst | Tenfold daily totals imply 1.16/11.57 average requests per second, not realistic peaks; validate these assumed peaks. |
-| No stale fallback prices; fail unavailable during DB interruption | Avoid presenting outdated pricing as authoritative. |
+|---|---|
+| Deploy two or more healthy API replicas and route only to ready instances | Supports node failure and rolling updates |
+| Reserve bounded database connections/concurrency for query traffic | Prevents publication and polling from exhausting query resources |
+| Use the primary for all authoritative queries | Avoids weakening QA-1 through replica lag |
+| Validate machine token identity and current hotel entitlement | External API access must follow the same scope policy as users |
+| Read updated permissions on the next authorization check | Makes revocation behavior explicit without hidden cache delay |
+| Measure volume, mean latency, tails, saturation and errors | Daily totals and average latency alone can hide peak failures |
 
-Section 5 adds production deployment, S3 covers scaled queries and S6 covers failover. Section 8 supplies capacity calculations and provisional latency/recovery targets. The consolidated result is [architecture.md](architecture.md); later iterations refine these views without introducing separate conflicting architecture documents.
+Average demand grows from approximately 1.16 to 11.57 queries per second. A provisional peak factor of ten gives approximately 116 queries per second for sizing experiments, not a contractual peak. Both load levels must use the same hotel distribution, query shape, warm-up policy and error accounting. Compare mean latencies at a stable system state and reject results that improve by dropping requests. Autoscaling does not remove the need to measure database capacity.
 
 ### Step 6: Record design decisions
 
 | Driver | Decision | Rationale | Discarded alternatives |
-| --- | --- | --- | --- |
-| HPS-3; QA-3, QA-4, QA-1 | D10: Independent query pool and primary reads | Balance horizontal app capacity and consistent visibility. | Eventually consistent query store or cache now. |
-| QA-3, QA-2; CON-6 | D11: Managed fenced failover and tested backups | Protect committed state in a defined single-zone failure model. | Single-zone DB; unproven active-active design. |
+|---|---|---|---|
+| QA-3, QA-4, CON-6 | D8: multi-zone failover and resource reservations | Limits single-node failure and workload interference | Active-active multi-region complexity without RTO/RPO justification |
+| QA-5, HPS-6 | D2 refinement: current server-side entitlements and audit | Direct-object requests cannot bypass UI restrictions | Client-side restrictions and stale authorization caches |
+| HPS-3, QA-4 | D5 refinement: indexes, bounds and versioned pagination | Controls scan cost while preserving snapshot consistency | Unbounded scans and live pagination over changing rows |
 
-These decision IDs are recorded in section 9 of the architecture document.
+The refined decisions are in architecture section 9. Database backups and restore drills are required, but retention and regional recovery commitments remain open business decisions.
 
-### Step 7: Analyze the design and review goal achievement
+### Step 7: Analyze design and review achievement
 
 | Driver | Analysis result |
-| --- | --- |
-| HPS-3 | Satisfied at design level: consistent query route and deployment defined. |
-| QA-3 | Partially satisfied: redundancy and recovery path specified; provider behavior, SLA period and measurements pending. |
-| QA-4 | Partially satisfied: scale mechanisms and paired experiment defined; target wording, peak profile and results pending. |
-| CON-6 | Satisfied at design level: managed runtime, state and health interfaces. |
-| QA-1 regression | Partially satisfied: primary visibility preserved; synchronous replication and lock contention must fit budget. |
-| QA-2 regression | Partially satisfied: outbox survives defined durable commits; regional loss and CMS receipt scope remain unresolved. |
-| QA-5 regression | Satisfied at design level: all replicas share mandatory authorization policy and current grants. |
+|---|---|
+| HPS-1, HPS-6 | Satisfied at design level: provider login, scoped administration and permission update semantics |
+| HPS-3 | Satisfied at design level: consistent authorized queries and explicit unavailable responses |
+| QA-3 | Partially satisfied: multi-zone failover and isolation designed; accounting policy, RTO/RPO and fault-test evidence pending |
+| QA-4 | Partially satisfied: capacity tactics and comparison method exist; wording, workload distribution and benchmark evidence pending |
+| QA-5 | Satisfied at design level under stated in-flight revocation boundary; negative security tests and provider capability confirmation remain |
+| CON-2, CON-6 | Satisfied at design level: provider identity and managed cloud deployment |
 
-Iteration 5 completes release mechanics, test coverage, observability and the final evidence inventory. Scaling is a design proposal, not a benchmark result.
-
-Validation experiments are recorded in [validation-plan.md](validation-plan.md). Satisfied at design level means sufficient decisions for the architectural intent; measurements and implementation conformance are separate evidence.
+All primary drivers now have design responses. Quantitative compliance remains unproven. Iteration 5 completes delivery, testability and validation governance rather than treating this analysis as production acceptance.

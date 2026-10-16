@@ -1,87 +1,103 @@
-# Hotel Pricing System - Validation and Open Decisions
+# Hotel Pricing System - Validation Plan
 
-This plan accompanies the completed ADD design in [architecture.md](architecture.md). All experiments below are **planned, not executed**. Documentation consistency checks do not establish application correctness, latency, reliability or availability.
+This plan defines future implementation evidence. No load, failover, security or integration test has been executed against an HPS implementation in this design task. Documentation review is not runtime validation.
 
-## Acceptance decisions still needed
+## Acceptance assumptions and decision register
 
-These items do not block completion of the design documents. They must be resolved by the indicated responsibility area before implementation contracts or release acceptance are finalized. The user requested no further questions during this design task.
+| ID | Decision needed | Proposed working basis | Responsible role | Gate |
+|---|---|---|---|---|
+| A1 | QA-1 timing, dimensions and normal load | Ingress receipt to authoritative commit, strictly less than 100 ms for a bounded hotel/date update; record response time separately | Product owner and performance lead | Before benchmark acceptance |
+| A2 | QA-2 acceptance, receipt and recovery horizon | Accepted means committed; every accepted change eventually has a durable CMS receipt under recoverable outages | Product owner and CMS owner | Before integration completion |
+| A3 | CMS idempotency, ordering and receipt lookup | Publication ID deduplication, hotel sequence enforcement and durable receipt confirmation | Integration owner and CMS owner | Before QA-2 sign-off |
+| A4 | QA-3 accounting, maintenance, RTO and RPO | Proposed monthly query SLI with visible exclusions; multi-zone failover and tested backup restore | Operations and product owner | Before production readiness |
+| A5 | QA-4 wording, query mix, peak and baseline | Mean latency at high load at most 1.2 times low-load baseline; provisional 10x daily-average peak | Product owner and performance lead | Before load-test sign-off |
+| A6 | Currency, rounding, taxes, rule precedence and effective dates | Decimal arithmetic, explicit currency and pinned policy versions; no inferred conversion | Pricing domain owner | Before calculator implementation acceptance |
+| A7 | Permission scope and revocation semantics | Current entitlements checked per request; requests already authorized may finish | Security and product owner | Before access-control sign-off |
+| A8 | Measurement completeness and retention | Unsampled accepted-publication ledger, delivery intents/outcomes and replayable export; pre-persistence failures separately counted | Operations and product owner | Before QA-8 sign-off |
+| A9 | Team, budget, provider and project kickoff | Responsibility areas and relative milestones; managed services chosen by capability | Engineering lead | Before committing implementation dates/cost |
+| A10 | Old-system export, freeze and rollback contract | Rehearsed import/reconciliation and one authoritative writer | Migration lead and system owners | Before cutover |
+| A11 | Full independent-testing inventory | Components below must run with no live external identity/CMS dependency | Quality lead | Before QA-9 sign-off |
 
-| ID | Decision | Provisional design position | Responsible area / latest useful point |
-|---|---|---|---|
-| O01 | QA-1 measurement boundary, percentile and normal workload. | Ingress to query-visible durable commit; p99 below 100 ms is an engineering hypothesis, not a replacement for the original bound. | Product/domain and performance owners; before performance acceptance criteria. |
-| O02 | CMS receipt, idempotency, ordering and timeout behavior. | Stable publication IDs, durable receipts and stale-sequence rejection; unknown results reconcile before later hotel deliveries. | Integration owner and CMS owner; before enabling automatic delivery. |
-| O03 | Delivery delay, recoverable-failure envelope and retention. | Eventual receipt after recoverable failures; alert after five minutes, retain all unacknowledged changes. | Product/integration/operations; before delivery SLO and storage sizing. |
-| O04 | QA-3 accounting period, exclusions, dependency treatment and disaster recovery. | Query availability includes database/ingress interruptions; illustrative monthly accounting, five-minute single-zone recovery and zero acknowledged loss. Region-wide targets unset. | Product/platform; before infrastructure choice and SLA agreement. |
-| O05 | QA-4 latency wording and realistic peak distribution. | At most 20% mean latency increase at tenfold daily volume; provisional 12/116 requests per second peaks. | Product/performance; before capacity acceptance. |
-| O06 | Currency, tax inclusion, rounding, rule vocabulary and effective dates. | Decimal arithmetic and explicit versioned configuration; reject incomplete policy configuration. | Domain/product; before calculation implementation is accepted. |
-| O07 | Multi-date atomicity and configuration activation scope. | Individually atomic hotel/date changes with explicit partial outcomes. | Product/domain; before UI and command contracts freeze. |
-| O08 | Provider identity capabilities, external caller grants and administrator scope. | Authorization code with PKCE for browser; workload identity for machines; DB hotel/operation grants. | Security/integration; before identity integration. |
-| O09 | Required QA-8 measures and completeness/retention definition. | Durable committed-publication and delivery records; sampled traces are supplemental; total-infrastructure-loss measurement limits explicit. | Product/operations; before monitoring acceptance. |
-| O10 | Cloud service capabilities, budget, staffing and kickoff date. | Existing provider, managed runtime/relational state, Java/Angular; relative two/six-month milestones. | Architecture/platform/project owner; before delivery commitments. |
-| O11 | Legacy export, consumer routes and pending-delivery migration. | Shadow comparison, freeze/reconcile and single write authority. | Integration/project owner; before cutover rehearsal. |
-| O12 | Retry/idempotency history retention and replay behavior. | Proposed 90-day result retention; retain key tombstones beyond result removal and reject expired replays. | Domain/operations; before retention jobs are enabled. |
+No question is silently converted into an approved requirement. These assumptions allow design work to finish while leaving concrete acceptance decisions visible.
 
-## Functional and invariant verification
+## Scenario validation
 
-| Experiment | Drivers | Setup and stimulus | Required observation |
-|---|---|---|---|
-| V01 - Login and scopes | HPS-1, HPS-6, QA-5 | Provider simulator then staging provider; valid/expired/wrong-audience tokens, key rotation, cross-hotel reads/writes, non-admin grant edits and revocation races. | Unauthorized calls never disclose or mutate another hotel's data; permissions take effect under documented transaction-start/write-lock semantics. |
-| V02 - Deterministic calculation | HPS-2, HPS-5 | Versioned base/fixed/derived rules, room factors and explicit tax/rounding fixtures; simulation then commit with unchanged versions. | Preview and committed matrix match; no floating-point drift; fixed rates unchanged by unrelated base edits. |
-| V03 - Rule/configuration validation | HPS-4, HPS-5 | Cycles, missing base, arbitrary code, unknown currency/tax treatment, invalid date ranges and retired rates. | Invalid drafts cannot activate; complete errors are returned; historical prices retain original versions. |
-| V04 - Concurrency and atomic visibility | HPS-2, HPS-3, QA-1, QA-2 | Concurrent edits with same expected version, query continuously during commit, race activation and change. | One conflicting command succeeds and the other conflicts; readers see whole old/new matrices; no mixed version rows. |
-| V05 - Simulation isolation | HPS-2 | Simulate repeatedly, then compare DB publication/current-price/outbox state; commit after intervening change. | Simulation makes no pricing/delivery writes; stale commit conflicts rather than publishing stale preview. |
-| V06 - Idempotency | HPS-2, QA-2 | Duplicate same key/body, same key/different body, concurrent duplicates, lost response after commit and expired key. | Exactly one logical committed change; replay returns original authorized result, mismatch conflicts, expired replay is rejected. |
-| V07 - Multi-date and activation UX | HPS-2, HPS-4, HPS-5 | Several child changes, one conflict or validation failure; activate a draft over a date range. | UI shows each outcome; no claim of all-date success or atomicity; each committed child has its own publication. |
-| V08 - Query contract | HPS-3 | Date/rate/room filters, missing prices, maximum bounded response, over-limit query, pagination across updates. | Consistent response snapshot, versions/metadata present, explicit missing results and documented cross-page semantics. |
-
-A sample calculation fixture may use base 100.00, a 10% derived discount and fixed rate 80.00 with no tax: derived price is 90.00 and fixed remains 80.00. This is a test example only; tax and rounding examples must come from agreed O06 policies, especially where rounding intermediate values differs from rounding the final amount.
-
-## Quality experiments
-
-| Experiment | Drivers | Procedure | Acceptance evidence |
-|---|---|---|---|
-| V09 - Publication latency | QA-1 | Measure ingress-to-commit and first subsequent query visibility across agreed room/rate cardinalities, rule complexity and normal concurrent load. Include synchronous HA and hot-hotel edits. | Full distribution, maximum, errors, locks and transaction timing. Compare against O01; no result yet. |
-| V10 - Publication crash matrix | QA-2 | Kill application before/after commit; kill worker before send, after CMS receipt and before ledger commit; interrupt DB connection. | Reconcile all acknowledged application changes to unique publications and pending/received CMS IDs. No lost accepted changes. |
-| V11 - CMS failure and ordering | QA-2 | Simulate timeout after receipt, duplicate/late requests, 202 pending, 429, 5xx, permanent rejection, worker lease expiry and paused old worker. | Every change retained; same ID replay; no stale overwrite; per-hotel order; other hotels continue; unsupported CMS behavior surfaces as unresolved delivery. |
-| V12 - Backlog recovery | QA-2, QA-3 | Disconnect CMS, continue changes and queries, restore CMS; approach configured retention/storage alarm thresholds. | Queries unaffected by CMS latency; backlog drains in sequence, no coalescing or loss; admission limits activate before storage exhaustion. Recovery rate exceeds incoming change rate. |
-| V13 - Availability and recovery | QA-3 | Remove query instance/zone, fail over DB, interrupt identity/telemetry/CMS independently, restore backup in isolated environment. | Timed query availability and downtime, fenced writer, restored state reconciliation and actual RTO/RPO; outage accounting follows O04. |
-| V14 - Tenfold query capacity | QA-4 | Same payload/hotel distribution at 100,000 and 1,000,000 daily-equivalent rates, warm-up then steady measurement; provisional peaks 12 and 116 requests/s, 250 burst. Repeat with hot-hotel skew and concurrent writes. | Mean ratio at most 1.2 only if O05 adopted; also absolute latency, p95/p99, throughput/error rates, cost and DB saturation. Record hardware and scaling policy for both runs. |
-| V15 - Security negative paths | QA-5 | UI bypass, token replay/expiry/key rotation, revoked scopes, machine-user separation, input attacks, secret/log inspection. | Authorization policy enforced in every adapter; safe error handling; no secrets in bundle/logs; provider outage behavior documented. |
-| V16 - Protocol extension | QA-6 | Add test gRPC adapter through the existing query port and execute the query contract suite. | Domain/application source unchanged; only adapter, wiring, packaging and protocol tests differ; same auth semantics. |
-| V17 - Artifact promotion | QA-7, CON-3, CRN-5 | Promote exact UI/image digests through integration and staging; change only runtime config and secret references. Rehearse rollback after additive migration. | Same artifacts verified; no code edits/rebuild; environment separation and backward compatibility hold. |
-| V18 - Telemetry completeness | QA-8 | Compare ledger counts and timings with exported metrics; stop collector/exporter, restart at checkpoint, force duplicate export and interrupted attempt. | Each committed publication/attempt represented once under agreed measure semantics; unknown outcomes visible; gaps recover. Whole-system-loss limits recorded. |
-| V19 - Disconnected integration | QA-9 | Disable access to all live external endpoints and execute every element suite below. | Tests run independently; no accidental live traffic; failures remain diagnosable. Staging contracts separately detect simulator drift. |
-| V20 - Browser compatibility | CON-1 | Responsive workflows on agreed supported browsers across Windows/macOS/Linux and selected mobile devices, with keyboard navigation. | Usable layout, login redirects, forms, conflict handling and queries at each viewport. Matrix still needs product agreement. |
-| V21 - Legacy cutover | CON-4, CRN-4 | Rehearse import, shadow comparison, write freeze, final reconcile, consumer switch and pending-delivery transfer. Rehearse reverting after new accepted changes. | One write authority, no duplicate CMS sends, no lost new changes, timed rollback with data reconciliation. |
-
-Run single-zone and total-region failure cases separately: backups alone do not establish zero loss of every acknowledged change across regional disasters. A load run that throttles or errors above target cannot be reported as successful capacity merely because successful responses remain fast.
-
-## Independent integration-test inventory
-
-| Element | Local or isolated dependency | Contract and failure coverage |
+| Driver | Experiment | Evidence and pass condition |
 |---|---|---|
-| Angular shell/identity client | Local identity protocol simulator and browser automation | Redirects, PKCE failures, expiry, capabilities and responsive navigation. |
-| Configuration/pricing/query/status UI | Local REST contract server | Valid/error/conflict/partial outcomes, versions and pending CMS state. |
-| REST and future protocol adapters | In-process application with test principals | Serialization, bounds, status/error mapping and principal propagation. |
-| Authentication/authorization | Local signing-key/identity simulator and test DB grants | Issuer/audience, rotation, revocation races and cross-hotel denial. |
-| Pricing engine and rule validator | Versioned fixtures; no external services | Determinism, decimal arithmetic, cycles, fixed-rate invariants and limits. |
-| Change service and transaction coordinator | Isolated real relational DB instance | Locking, rollback, idempotency, atomic matrix/outbox commit and concurrency. |
-| Configuration and grant service | Isolated DB and rule engine | Drafts, activation, permission races and audit. |
-| Query port and read adapter | Isolated DB with seeded grants/versions | Snapshot behavior, indexes, query bounds and pagination semantics. |
-| Worker lease scheduler/dispatcher | Isolated DB, controllable clock and CMS simulator | Lease expiry, ordering, jitter, retry and crash recovery. |
-| CMS adapter and reconciler | Programmable local REST CMS simulator | Durable receipts, duplicate recognition, stale sequence rejection and unknown outcomes. |
-| Ledger and metric exporter | Isolated DB and local telemetry sink | Checkpoints, replay, deduplication, missing export and retention. |
-| Ingress, runtime config and health endpoints | Local reverse proxy/test runtime | Routing, limits, configuration validation and readiness behavior. |
-| Migrations and deployment packaging | Disposable DB and local container/runtime stack | Expand/contract compatibility, artifact digest identity and rollback. |
+| HPS-1, QA-5 | Login with valid/invalid provider identity; wrong issuer/audience, expired token, unknown key, missing session and forged scope | Valid identity only; no credential persistence; consistent 401/403; no data disclosure |
+| HPS-2 | Simulate then commit base and fixed changes across rooms/rates; change inputs between preview and commit | Preview has no publication side effects; commit matches pinned inputs; stale token yields conflict |
+| HPS-3 | Query a newly committed hotel/date and paginate while later changes occur | Complete committed version or later consistent version; stable snapshot cursor; explicit expiry |
+| HPS-4, HPS-5 | Add/edit/retire hotels, rooms, rates, taxes and cyclic rules; activate policy with affected prices | Invalid graphs rejected; references remain valid; old amounts retain policy version; recalculation explicit |
+| HPS-6, QA-5 | Administrator changes permissions; directly invoke APIs for another hotel and attempt grants beyond admin scope | Next authorization check sees new revision; cross-hotel and over-scope actions denied; audit complete |
+| QA-1 | Sweep approved maximum room/rate counts under normal read/write concurrency, including hot-hotel contention | Complete sets become queryable strictly below 100 ms under agreed interpretation; retain all observations, tails and errors; no percentile substituted without agreement |
+| QA-2 | Crash before/after commit, before send, after CMS receipt before local acknowledgement; drop replies, duplicate requests, expire lease during slow send | Every accepted publication remains queryable and eventually has matched CMS receipt; no duplicate logical update or stale overwrite; no task silently discarded |
+| QA-3 | Kill replica, drain during rollout, interrupt a zone/database primary, fail CMS and identity, restore backup | Measured query success and outage intervals within approved SLO/RTO; data loss within approved RPO; maintenance shown separately |
+| QA-4 | Compare 100k/day and 1m/day equivalent loads plus agreed peaks using identical query mix; run long enough to reach steady state | High-load mean latency no greater than 1.2 times baseline under provisional reading; throughput achieved, no concealed error increase; capture p95/p99 and saturation |
+| QA-6 | Add a thin alternate query adapter such as gRPC using existing application port | Core source unchanged; same authorization, validation and results; adapter/composition-only changes |
+| QA-7 | Promote exact backend and UI artifact digests through integration and staging with separate runtime config | Same digests and no code edits; validated endpoints/secrets differ as intended |
+| QA-8 | Disable exporter, crash worker, repeat sends, recover backlog and reconcile database versus monitoring | One authoritative record for each accepted publication and each attempt intent; no sampled omissions; missing/unknown outcomes explicitly classified; export counts reconcile |
+| QA-9 | Execute every component's integration harness with external-system networking disabled | All inventory entries testable; real database where transaction semantics matter; no dependence on live CMS or identity |
 
-Provider-managed replication, identity internals and external CMS are outside the HPS implementation boundary. Their adapters support independent tests, but actual service failover and protocol compatibility require isolated cloud/staging verification. This distinction prevents QA-9 from being misread as proof that simulators establish real cloud behavior.
+Latency instrumentation must not pretend that a timestamp written inside a transaction is its commit completion time. Measure monotonic elapsed time at the application boundary and record durable publication identity; use database-supported commit evidence or explicit recovery classification for the crash-after-commit-before-measurement window. The selected database and telemetry implementation must demonstrate this boundary before claiming 100% accurate commit-latency collection. If exact reconstruction is unavailable, record an unknown/bounded timing result and keep QA-8 partially satisfied rather than inventing a number.
 
-## Release evidence and ownership
+For reliability reconciliation, compare sets of accepted publication IDs, committed price versions, outstanding tasks, acknowledged CMS IDs and exported measurement IDs. Duplicate attempts are expected; missing logical publications are not. Storage/backlog alarms must fire before capacity exhaustion. After a recoverable CMS outage, verify sustained drain capacity greater than incoming publication rate and measure total recovery time against A2.
 
-The two-month MVP demonstrates hotel/rate configuration, scoped login, simulation, change/query and visible delivery state. Mocks must be labeled in integration demonstrations; staging uses external test systems. The six-month release requires disposition of O01-O12, execution of relevant experiments, migrated-data reconciliation, operational runbooks and documented residual risk acceptance by the appropriate owners.
+## Component integration-test inventory
 
-Keep experiment evidence with workload/configuration versions, artifact digests, time window, raw counts and failure timelines. The domain area owns calculation fixtures; integration/security owns provider/CMS evidence; platform/quality owns load/recovery/promotion/telemetry results. Assign named owners when staffing is known. None of these planned activities has been reported as executed by this documentation task.
+| Element | Test boundary and substitute | Key assertions |
+|---|---|---|
+| Browser shell and REST client | Browser runner with API/identity redirect simulator | Login redirect, CSRF/session behavior, error mapping and no token leakage |
+| Hotel/access views | Deterministic API simulator | Scope-filtered functions and conflict display |
+| Pricing/query views | Versioned API simulator | Preview versus commit distinction, version presentation and pagination |
+| REST adapters | Real application with identity port double and test database | Transport validation, status mapping and request bounds |
+| Identity and authorization | Deterministic provider/JWKS service, real entitlement repository | Key rotation, unknown keys, expired identity and cross-hotel denial |
+| Configuration/permission service | Real test database | Version conflicts, rule graph validity, audit and permission revision |
+| Calculator with pricing service | Golden business examples plus real repository integration | Decimal rounding, tax/rate ordering, preview/commit parity |
+| Transaction/repository adapters | Real disposable engine matching production major version | Atomic rollback, duplicate key, concurrent commits and complete visibility |
+| Query service/read adapter | Real test database with representative indexes | Snapshot semantics, bounded scans and authorization |
+| Task claimant/lease repository | Real database and concurrent workers | Expired lease recovery, fencing and per-hotel order |
+| Delivery coordinator/CMS adapter | Programmable HTTP simulator | Timeout, duplicate, 202, 429, 5xx, permanent errors and durable receipt |
+| Attempt ledger/reconciler/exporter | Real database and failing telemetry/CMS simulators | Unknown outcomes, redrive and checkpoint replay without omission |
+| Ingress/runtime/configuration | Ephemeral cloud test deployment and synthetic clients | Health routing, configuration validation, secret isolation and graceful drain |
+| CI and migration workflow | Disposable integration environment and old/new application versions | Same digest promotion, compatible schema overlap and rollback rehearsal |
 
-## Documentation checks performed
+Pure calculation unit/property checks supplement these integration tests; they do not replace transaction or receiver-contract tests. External staging contract tests remain necessary because local doubles cannot prove a partner's actual behavior.
 
-Checked that all five iteration records contain ADD Steps 1 through 7, the architecture contains the nine template sections, all 26 source driver identifiers appear in the assessment, and all 15 decision identifiers are recorded. Checked local Markdown links, balanced code fences and absence of obsolete review-pending notices. Reviewed sequence success/failure paths and normalized generated text encoding. The architecture contains 15 Mermaid diagrams; they were inspected as source, not rendered with a Mermaid engine. These checks validate document structure only, not the planned system experiments above.
+## Release gates and responsibilities
+
+| Gate | Required evidence | Owner role |
+|---|---|---|
+| MVP by end of month 2 | Browser login, scoped hotel setup, preview/change/query and staging CMS flow; early latency and recovery results | Product and engineering leads |
+| Architecture boundary gate | No transport/SDK imports in core; all outbound integrations behind ports; versioned contracts | Module owners |
+| Data/security gate | Agreed monetary semantics, authorization negative tests, audit, backup restore and migration rehearsal | Domain, security and migration leads |
+| Quality gate | Agreed QA-1 through QA-5 acceptance definitions and passing measurements; QA-8 completeness reconciliation | Performance, quality and operations leads |
+| Deployment gate | Same-digest promotion, rollback-compatible migrations, healthy rolling deployment and configured alerts | Platform owner |
+| Production by end of month 6 | No unresolved high-priority acceptance blockers; staffing/scope feasibility reviewed; all external contracts verified | Product and engineering leads |
+
+If acceptance evidence fails, revise the affected ADD decision and rerun that experiment. Do not conceal failed latency by weakening consistency, failed reliability by discarding work, or failed availability by excluding unplanned outages.
+
+## Final driver traceability
+
+| Driver group | Main decisions | Design evidence | Remaining qualification |
+|---|---|---|---|
+| HPS-1, HPS-6, QA-5 | D2 | Architecture 7.1 and 8; iterations 1 and 4 | Provider capabilities, revocation agreement and security tests |
+| HPS-2, HPS-4, HPS-5, QA-1 | D3, D4 | Architecture 7.2-7.3; iteration 2 | Business policies and measured timing |
+| HPS-3, QA-4 | D5, D8 | Architecture 7.5; iteration 4 | Workload agreement and capacity evidence |
+| QA-2 | D4, D6, D12 | Architecture 7.3-7.4; iterations 2-3 and 5 | Receiver semantics and recovery/cutover proof |
+| QA-3 | D8, D10 | Architecture 5 and 7.5; iteration 4 | SLO policy, fault/restore tests and RTO/RPO |
+| QA-6, QA-9 | D9 | Architecture 6 and 7.6; iteration 5 | Alternate adapter and complete harness execution |
+| QA-7 | D10 | Architecture 7.7; iteration 5 | Promotion demonstration |
+| QA-8 | D7 | Architecture 7.4; iteration 3 | Timing completeness, retention and export evidence |
+| CON-1 | D1 | Architecture 5-6; iteration 1 | Actual browser/device matrix |
+| CON-2, CON-6 | D2, D8 | Architecture 5; iterations 1 and 4 | Cloud capability and cost selection |
+| CON-3 | D10 | Architecture 7.7; iteration 5 | Existing platform pipeline setup |
+| CON-4 | D1, D11 | iteration-plan.md | Kickoff, staffing and scope feasibility |
+| CON-5 | D6, D9 | Architecture 8; iterations 3 and 5 | Negotiated REST contracts |
+| CRN-1, CRN-2 | D1 | Architecture 5-6; iteration 1 | Implementation follows boundaries |
+| CRN-3 | D11 | iteration-plan.md | Named ownership assignment |
+| CRN-4 | D3, D4, D9, D10, D11, D12 | Architecture 9; all iteration reviews | Ongoing discipline and implementation evidence |
+| CRN-5 | D10 | Architecture 7.7; iteration 5 | Actual delivery pipeline deployment |
+
+## Residual risk summary
+
+The primary database is a shared critical dependency and must be sized and fault-tested. Strict hotel ordering creates head-of-line blocking during an invalid CMS event. Synchronous calculation may miss QA-1 for large configurations or hot hotels. Provider identity outages affect new logins. Exact publication timing can be uncertain after a crash at commit. These are explicit design limits to validate; none is resolved merely by choosing a cloud service or adding more application replicas.

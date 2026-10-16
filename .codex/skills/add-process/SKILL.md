@@ -4,17 +4,14 @@ description: This is step-by-step process for attribute-driven design (ADD) 3.0.
 ---
 
 ## Attribute driven design
-
 Attribute Driven Design is an iterative process to design software architectures. The steps of the process are the following.
 
 
 ### Step 2: Establish goal for the iteration by selecting drivers
-
-The goal of the iteration has been defined in the `/docs/iteration-plan.md` document. Review the goal and associated drivers.
+The goal of the iteration has been defined in the `/HPS/design/iteration-plan.md` document. Review the goal and associated drivers.
 
 
 ### Step 3: Choose one or more elements of the system to refine
-
 Consider the diagrams in the `/HPS/design/architecture.md` document and identify elements that will need to be refined to satisfy the drivers associated with the goal of the iteration.
 Refinement can mean decomposition into finer-grained elements (top-down approach), combination of elements into coarser-grained elements (bottom-up approach), or improvement of previously identified elements. For greenfield development, in the first iteration, the only element to refine is the whole system.
 
@@ -25,7 +22,7 @@ In this step, design concepts are selected to achieve the iteration goal, these 
  - Externally developed components: including frameworks or specific cloud resources
  - Tactics: These are proven strategies to address particular quality attributes
 
- Answer to the user the design concepts that you select along with their pros, cons and alternatives that are discarded. Show this in a table in markdown format. Wait for user to review.
+ Answer to the user the design concepts that you select along with their pros, cons and alternatives that are discarded. Show this in a table in markdown format.
 
 |Design concept|Pros|Cons|Discarded alternatives|
 |---|---|---|---|
@@ -65,5 +62,3 @@ The analysis result can have different states:
  - Satisfied: If sufficient design decisions have been made to satisfy the driver
  - Partially satisfied: If some design decisions were made but more decisions are necessary
  - Not satisfied: If no design decisions were made during the iteration to satisfy the driver
-
-

@@ -1,71 +1,68 @@
 # Hotel Pricing System - Iteration 1
 
-Completed on 2026-10-14 as an ADD design iteration. The user explicitly authorized execution through the last iteration without review pauses. Completion means the design steps and analysis are documented, not that the system is implemented or its quality targets verified.
+Establish the whole-system structure after the shared input review and domain modeling in preparation.md. This iteration is the starting point for iterations 2-5.
 
 ## Iteration Goal
 
-Establish the initial structure and responsibility boundaries around hotel configuration, price simulation/changes and queries.
+Create an implementable foundation for authorized hotel configuration, price changes and queries within the MVP window.
 
 ## Drivers to Address
 
-HPS-2, HPS-3, HPS-4; CRN-1, CRN-2, CRN-3, CRN-4; CON-1, CON-2, CON-4, CON-5, CON-6; QA-6, QA-9.
+CRN-1, CRN-2, CRN-3, CRN-4; HPS-1, HPS-2, HPS-3, HPS-4; QA-5; CON-1, CON-2, CON-4, CON-6.
 
 ## ADD Process Steps
 
-### Step 1: Review inputs
+### Step 2: Establish goal by selecting drivers
 
-Reviewed the current driver document, preparation domain model, supplied use-case image and iteration plan. Primary business priorities are HPS-2, HPS-3 and HPS-4. QA-1 through QA-5 constrain the baseline. Preserve the source requirements and the provisional interpretations recorded in the preparation review.
-
-### Step 2: Establish the goal by selecting drivers
-
-Follow Iteration 1 of [iteration-plan.md](iteration-plan.md). Establish the initial structure and responsibility boundaries around hotel configuration, price simulation/changes and queries. Priorities and assumptions remain traceable to [architectural-drivers.md](../architectural-drivers.md).
+Use iteration-plan.md iteration 1. Prioritize business workflows and hotel configuration while establishing authentication before exposing data. Input review is already completed in preparation.md; remaining ambiguities are explicitly carried forward.
 
 ### Step 3: Choose elements to refine
 
-| Element | Refinement scope |
-| --- | --- |
-| Whole Hotel Pricing System | Greenfield refinement of browser interaction, domain/application workflows, owned persistence and external integration. External systems remain collaborators, not redesign targets. |
+Refine the whole HPS, the only initial system element. Separate browser presentation, application responsibilities, durable state and external delivery. Treat cloud identity and enterprise consumers as external elements rather than components to redesign.
 
 ### Step 4: Choose design concepts
 
 | Design concept | Pros | Cons | Discarded alternatives |
-| --- | --- | --- | --- |
-| Modular Java application with Angular UI | Fits known team skills; local transactions; few deployment units. | Application modules need dependency enforcement; releases share a codebase. | Fine-grained microservices: distributed transaction and operations costs are premature. |
-| Ports and adapters | Replaceable protocols and independently testable external dependencies. | More interface and mapping code. | HTTP and provider types in the pricing core: conflicts with QA-6. |
-| HPS-owned managed relational store | Versioned configuration and atomic price publication share one transaction. | Database becomes a common capacity and availability dependency. | Shared external database: violates decoupling; multiple stores: unnecessary dual writes. |
-| Separate asynchronous CMS worker | Isolates external latency and outages from query/change response paths. | Requires durable handoff and delivery-state operations. | Synchronous CMS call in price request: couples availability and latency. |
+|---|---|---|---|
+| Modular Java application and Angular UI | Uses team knowledge; small release surface; enforceable domain boundaries | Shared application release and some resource contention | Microservice per domain: premature distributed coordination for six-month delivery |
+| Ports and adapters | Separates external contracts from business logic; enables isolated tests | Additional interfaces and mapping code | SDK/HTTP logic embedded in domain: change propagation |
+| Cloud identity with server hotel authorization | Existing SSO; no HPS password ownership | Identity availability and entitlement integration must be managed | Custom identity store or browser-only authorization |
+| Managed cloud runtime and relational database | Reduces operational setup; supports atomic publication | Cloud cost and service limits require sizing | Self-managed orchestration cluster without demonstrated need |
 
-### Step 5: Instantiate elements, sketch views and define interfaces
+### Step 5: Instantiate elements, views, responsibilities and interfaces
+
+Architecture sections 2, 4, 5 and 6 establish context, domain, containers and application components. Sequence 7.1 defines login and sequence 7.2 defines initial hotel configuration; their contracts appear in section 8. Pricing internals and delivery remain responsibilities to refine in iterations 2 and 3.
 
 | Instantiation decision | Rationale |
-| --- | --- |
-| Browser, command application, query interface, delivery worker and owned database responsibilities | Separate user, pricing and integration concerns without prematurely distributing domain ownership. |
-| Framework-neutral pricing/query ports and REST adapters | Protect core logic from protocol changes and enable test doubles. |
-| Responsibility areas for front end, domain/application, integration/security and platform/quality | Allocate work by contract while team size remains unknown. |
-
-Architecture sections 2, 4, 5 and 6 establish context, domain and structural views. S2 and S3 identify the principal change/query collaboration; section 8 defines the corresponding ports. The consolidated result is [architecture.md](architecture.md); later iterations refine these views without introducing separate conflicting architecture documents.
+|---|---|
+| Browser shell, configuration views and pricing/query views call REST adapters | Satisfies browser constraint with clear presentation ownership |
+| Java application contains authorization, configuration, pricing and query modules | Keeps core business coordination local and assigns distinct ownership |
+| Cloud identity subjects link to HPS hotel permissions | Authentication and business authorization have different owners |
+| Separate delivery worker is an initial container responsibility | External CMS outages must not occupy browser request processing |
+| Team allocation uses responsibility areas, not assumed headcounts | Staffing is unknown; individuals may own multiple areas |
 
 ### Step 6: Record design decisions
 
 | Driver | Decision | Rationale | Discarded alternatives |
-| --- | --- | --- | --- |
-| HPS-2, HPS-3, HPS-4; CRN-1, CRN-2; CON-1, CON-4 | D01: Angular plus modular Java application | Core workflows fit a bounded initial application. | Independent service per use case. |
-| QA-6, QA-9; CON-5 | D02: Ports and REST adapters | Decouple protocols and tests from core behavior. | Transport types throughout core. |
-| CON-2, CON-6; CRN-4 | D03: Owned managed relational persistence | Local consistency without external table coupling. | Shared integration database. |
+|---|---|---|---|
+| CRN-1, CRN-2, CON-4 | D1: modular Java and Angular | Familiar, small initial deployment surface | Fine-grained distributed services |
+| HPS-1, QA-5, CON-2 | D2: provider login and server scopes | Prevents credential duplication and cross-hotel access | Local passwords, UI-only access checks |
+| CRN-3, CRN-4 | D11: module ownership and contract review | Makes work allocation and change impact explicit | Implicit shared ownership and undocumented interfaces |
 
-These decision IDs are recorded in section 9 of the architecture document.
+These decisions are recorded in architecture section 9. Managed runtime selection is a service-category decision, not vendor procurement.
 
-### Step 7: Analyze the design and review goal achievement
+### Step 7: Analyze design and review achievement
 
 | Driver | Analysis result |
-| --- | --- |
-| HPS-2, HPS-3, HPS-4 | Partially satisfied: responsibility boundaries identified; transaction and configuration behavior refined in Iteration 2. |
-| CRN-1, CRN-2 | Satisfied at design level: initial structure and Java/Angular roles established. |
-| CRN-3, CRN-4 | Partially satisfied: work packages and boundaries defined; owners and unresolved risks remain. |
-| CON-1, CON-2, CON-5, CON-6 | Satisfied at design level: browser, cloud hosting/identity and isolated REST contracts. |
-| CON-4 | Partially satisfied: limited deployment complexity supports the plan; staffing and estimates unknown. |
-| QA-6, QA-9 | Partially satisfied: adapter seams established; extension experiment and complete test inventory follow in Iteration 5. |
+|---|---|
+| CRN-1 | Satisfied at design level: explicit context, containers and component responsibilities |
+| CRN-2 | Satisfied at design level: Java and Angular preserve known expertise |
+| CRN-3 | Partially satisfied: allocation model exists; named owners require actual team roster |
+| CRN-4 | Partially satisfied: boundaries and review discipline established; ongoing enforcement is required |
+| HPS-1, QA-5 | Partially satisfied: identity and scope boundary selected; full permission and revocation behavior refined in iteration 4 |
+| HPS-2, HPS-3 | Partially satisfied: workflow ownership and ports exist; pricing transaction and query consistency follow in iteration 2 |
+| HPS-4 | Satisfied at design level: scoped, versioned configuration responsibility and workflow defined |
+| CON-1, CON-2, CON-6 | Satisfied at design level: browser, cloud identity and managed cloud resources selected; platform/browser validation remains |
+| CON-4 | Partially satisfied: design supports small MVP scope; schedule depends on capacity and external access |
 
-Refine the application, authorization and store transaction boundary in Iteration 2. Do not yet claim quality targets have been met.
-
-Validation experiments are recorded in [validation-plan.md](validation-plan.md). Satisfied at design level means sufficient decisions for the architectural intent; measurements and implementation conformance are separate evidence.
+The initial structuring goal is achieved. Carry pricing semantics and latency to iteration 2, delivery reliability to iteration 3 and complete authorization/availability to iteration 4. No implementation evidence is claimed.
